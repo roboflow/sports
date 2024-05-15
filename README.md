@@ -8,11 +8,9 @@
 
 ## 👋 hello
 
-In sports, every centimeter and every second matter. That's why Roboflow decided to 
-use sports as a testing ground for our computer vision models. This repository contains 
-reusable tools that can be successfully applied both in sports and beyond.
+In sports, every centimeter and every second matter. That's why Roboflow decided to use sports as a testing ground to push our object detection, image segmentation, keypoint detection, and foundational models to their limits. This repository contains reusable tools that can be applied in sports and beyond.
 
-**code migration in progress...**
+🚧 **code migration in progress...**
 
 ## 💻 install
 
@@ -30,3 +28,12 @@ pip install git+https://github.com/roboflow/sports.git
 | soccer player detection         | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-players-detection-3zvbc) |
 | soccer field keypoint detection | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-field-detection-f07vi)   |
 
+Visit [Roboflow Universe](https://universe.roboflow.com/) and explore other sport-related datasets.
+
+## 🔥 demos
+
+https://github.com/roboflow/sports/assets/26109316/7ad414dd-cc4e-476d-9af3-02dfdf029205
+
+## 🏆 contribution
+
+We love your input! [Let us know](https://github.com/roboflow/sports/issues) what else we should build!
