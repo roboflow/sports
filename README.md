@@ -8,7 +8,20 @@
 
 ## 👋 hello
 
-code migration in progress...
+In sports, every centimeter and every second matter. That's why Roboflow decided to 
+use sports as a testing ground for our computer vision models. This repository contains 
+reusable tools that can be successfully applied both in sports and beyond.
+
+**code migration in progress...**
+
+## 💻 install
+
+We don't have a Python package yet. Install from source in a
+[**Python>=3.8**](https://www.python.org/) environment.
+
+```bash
+pip install git+https://github.com/roboflow/sports.git
+```
 
 ## ⚽ datasets
 

@@ -22,7 +22,8 @@ setuptools.setup(
     include_package_data=True,
     install_requires=[
         "supervision==0.21.0rc5",
-        "inference",
+        "umap-learn",
+        "scikit-learn"
     ],
     extras_require={
         'tests': [
