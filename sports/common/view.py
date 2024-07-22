@@ -6,8 +6,8 @@ import numpy.typing as npt
 
 class ViewTransformer:
     def __init__(
-            self, 
-            source: npt.NDArray[np.float32], 
+            self,
+            source: npt.NDArray[np.float32],
             target: npt.NDArray[np.float32]
     ) -> None:
         """
@@ -33,7 +33,7 @@ class ViewTransformer:
             raise ValueError("Homography matrix could not be calculated.")
 
     def transform_points(
-            self, 
+            self,
             points: npt.NDArray[np.float32]
     ) -> npt.NDArray[np.float32]:
         """
@@ -59,8 +59,8 @@ class ViewTransformer:
         return transformed_points.reshape(-1, 2).astype(np.float32)
 
     def transform_image(
-            self, 
-            image: npt.NDArray[np.uint8], 
+            self,
+            image: npt.NDArray[np.uint8],
             resolution_wh: Tuple[int, int]
     ) -> npt.NDArray[np.uint8]:
         """

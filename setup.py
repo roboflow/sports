@@ -21,9 +21,13 @@ setuptools.setup(
     packages=setuptools.find_packages(),
     include_package_data=True,
     install_requires=[
-        "supervision==0.21.0rc5",
+        "supervision",
+        "numpy",
+        "opencv-python",
+        "transformers",
         "umap-learn",
-        "scikit-learn"
+        "scikit-learn",
+        "tqdm"
     ],
     extras_require={
         'tests': [
