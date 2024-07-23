@@ -26,7 +26,7 @@ pip install git+https://github.com/roboflow/sports.git
 | use case                        | dataset                                                                                                                                                          |
 |:--------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | soccer player detection         | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-players-detection-3zvbc) |
-| soccer field keypoint detection | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-field-detection-f07vi)   |
+| soccer pitch keypoint detection | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-field-detection-f07vi)   |
 
 Visit [Roboflow Universe](https://universe.roboflow.com/) and explore other sport-related datasets.
 
