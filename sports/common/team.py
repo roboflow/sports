@@ -1,12 +1,12 @@
 from typing import Generator, Iterable, List, TypeVar
 
 import numpy as np
+import supervision as sv
 import torch
 import umap
 from sklearn.cluster import KMeans
 from tqdm import tqdm
 from transformers import AutoProcessor, SiglipVisionModel
-import supervision as sv
 
 V = TypeVar("V")
 
