@@ -104,6 +104,9 @@ class TeamClassifier:
         Returns:
             np.ndarray: Predicted cluster labels.
         """
+        if len(crops) == 0:
+            return np.array([])
+
         data = self.extract_features(crops)
         projections = self.reducer.transform(data)
         return self.cluster_model.predict(projections)

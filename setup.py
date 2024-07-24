@@ -27,7 +27,9 @@ setuptools.setup(
         "transformers",
         "umap-learn",
         "scikit-learn",
-        "tqdm"
+        "tqdm",
+        "sentencepiece",
+        "protobuf"
     ],
     extras_require={
         'tests': [
