@@ -17,11 +17,11 @@ Original data comes from the [DFL - Bundesliga Data Shootout](https://www.kaggle
 Kaggle competition. This data has been processed to create new datasets, which can be 
 downloaded from the [Roboflow Universe](https://universe.roboflow.com/).
 
-| use case                        | dataset                                                                                                                                                          |
-|:--------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| soccer player detection         | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-players-detection-3zvbc) |
-| soccer ball detection           | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-ball-detection-rejhg)    |
-| soccer pitch keypoint detection | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-field-detection-f07vi)   |
+| use case                        | dataset                                                                                                                                                          | train model                                                                                                                                                                                            |
+|:--------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| soccer player detection         | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-players-detection-3zvbc) | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow/sports/blob/main/examples/soccer/notebooks/train_ball_detector.ipynb)           |
+| soccer ball detection           | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-ball-detection-rejhg)    | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow/sports/blob/main/examples/soccer/notebooks/train_player_detector.ipynb)         |
+| soccer pitch keypoint detection | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-field-detection-f07vi)   | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow/sports/blob/main/examples/soccer/notebooks/train_pitch_keypoint_detector.ipynb) |
 
 ## 🤖 models
 
@@ -43,6 +43,8 @@ Useful for identifying and visualizing the layout of the soccer pitch.
 - `PLAYER_DETECTION` - Detects players, goalkeepers, referees, and the ball in the 
 video. Essential for identifying and tracking the presence of players and other 
 entities on the field.
+- `BALL_DETECTION` - Detects the ball in the video frames and tracks its position. 
+Useful for following ball movements throughout the match.
 - `PLAYER_TRACKING` - Tracks players across video frames, maintaining consistent 
 identification. Useful for following player movements and positions throughout the 
 match.
@@ -56,7 +58,6 @@ on the field.
 
 ## 🗺️ roadmap
 
-- [ ] Add support for `BALL_DETECTION` mode to detect the soccer ball in the video.
 - [ ] Add smoothing to eliminate flickering in RADAR mode.
 - [ ] Add a notebook demonstrating how to save data and perform offline data analysis.
 

@@ -9,12 +9,14 @@ from tqdm import tqdm
 from ultralytics import YOLO
 
 from sports.annotators.soccer import draw_soccer_field, draw_players
+from sports.common.ball import BallTracker
 from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
 from sports.configs.soccer import SoccerFieldConfiguration
 
 PLAYER_DETECTION_MODEL_PATH = 'examples/soccer/data/football-player-detection-v9.pt'
 PITCH_DETECTION_MODEL_PATH = 'examples/soccer/data/football-pitch-detection-v10.pt'
+BALL_DETECTION_MODEL_PATH = 'examples/soccer/data/football-ball-detection-v1.pt'
 
 BALL_CLASS_ID = 0
 GOALKEEPER_CLASS_ID = 1
@@ -37,6 +39,11 @@ EDGE_ANNOTATOR = sv.EdgeAnnotator(
     color=sv.Color.from_hex('#FF1493'),
     thickness=2,
     edges=CONFIG.edges,
+)
+TRIANGLE_ANNOTATOR = sv.TriangleAnnotator(
+    color=sv.Color.from_hex('#FF1493'),
+    base=20,
+    height=15,
 )
 BOX_ANNOTATOR = sv.BoxAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
@@ -67,6 +74,7 @@ class Mode(Enum):
     """
     PITCH_DETECTION = 'PITCH_DETECTION'
     PLAYER_DETECTION = 'PLAYER_DETECTION'
+    BALL_DETECTION = 'BALL_DETECTION'
     PLAYER_TRACKING = 'PLAYER_TRACKING'
     TEAM_CLASSIFICATION = 'TEAM_CLASSIFICATION'
     RADAR = 'RADAR'
@@ -119,7 +127,7 @@ def resolve_goalkeepers_team_id(
     return np.array(goalkeepers_team_id)
 
 
-def plot_radar(
+def render_radar(
     detections: sv.Detections,
     keypoints: sv.KeyPoints,
     color_lookup: np.ndarray
@@ -191,6 +199,39 @@ def run_player_detection(source_video_path: str, device: str) -> Iterator[np.nda
         annotated_frame = frame.copy()
         annotated_frame = BOX_ANNOTATOR.annotate(annotated_frame, detections)
         annotated_frame = BOX_LABEL_ANNOTATOR.annotate(annotated_frame, detections)
+        yield annotated_frame
+
+
+def run_ball_detection(source_video_path: str, device: str) -> Iterator[np.ndarray]:
+    """
+    Run ball detection on a video and yield annotated frames.
+
+    Args:
+        source_video_path (str): Path to the source video.
+        device (str): Device to run the model on (e.g., 'cpu', 'cuda').
+
+    Yields:
+        Iterator[np.ndarray]: Iterator over annotated frames.
+    """
+    ball_detection_model = YOLO(BALL_DETECTION_MODEL_PATH).to(device=device)
+    frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
+    ball_tracker = BallTracker(buffer_size=20)
+
+    def callback(image_slice: np.ndarray) -> sv.Detections:
+        result = ball_detection_model(image_slice, imgsz=640, verbose=False)[0]
+        return sv.Detections.from_ultralytics(result)
+
+    slicer = sv.InferenceSlicer(
+        callback=callback,
+        overlap_filter_strategy=sv.OverlapFilter.NONE,
+        slice_wh=(640, 640),
+    )
+
+    for frame in frame_generator:
+        detections = slicer(frame).with_nms(threshold=0.1)
+        detections = ball_tracker.update(detections)
+        annotated_frame = frame.copy()
+        annotated_frame = TRIANGLE_ANNOTATOR.annotate(annotated_frame, detections)
         yield annotated_frame
 
 
@@ -329,7 +370,7 @@ def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
             custom_color_lookup=color_lookup)
 
         h, w, _ = frame.shape
-        radar = plot_radar(detections, keypoints, color_lookup)
+        radar = render_radar(detections, keypoints, color_lookup)
         radar = sv.resize_image(radar, (w // 2, h // 2))
         radar_h, radar_w, _ = radar.shape
         rect = sv.Rect(
@@ -349,6 +390,9 @@ def main(source_video_path: str, target_video_path: str, device: str, mode: Mode
     elif mode == Mode.PLAYER_DETECTION:
         frame_generator = run_player_detection(
             source_video_path=source_video_path, device=device)
+    elif mode == Mode.BALL_DETECTION:
+        frame_generator = run_ball_detection(
+            source_video_path=source_video_path, device=device)
     elif mode == Mode.PLAYER_TRACKING:
         frame_generator = run_player_tracking(
             source_video_path=source_video_path, device=device)
@@ -361,17 +405,21 @@ def main(source_video_path: str, target_video_path: str, device: str, mode: Mode
     else:
         raise NotImplementedError(f"Mode {mode} is not implemented.")
 
-    for frame in frame_generator:
-        cv2.imshow("frame", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-    cv2.destroyAllWindows()
+    video_info = sv.VideoInfo.from_video_path(source_video_path)
+    with sv.VideoSink(target_video_path, video_info) as sink:
+        for frame in frame_generator:
+            sink.write_frame(frame)
+
+            cv2.imshow("frame", frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--source_video_path', type=str)
-    parser.add_argument('--target_video_path', type=str)
+    parser.add_argument('--source_video_path', type=str, required=True)
+    parser.add_argument('--target_video_path', type=str, required=True)
     parser.add_argument('--device', type=str, default='cpu')
     parser.add_argument('--mode', type=Mode, default=Mode.PLAYER_DETECTION)
     args = parser.parse_args()
