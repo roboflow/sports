@@ -9,14 +9,14 @@ from tqdm import tqdm
 from ultralytics import YOLO
 
 from sports.annotators.soccer import draw_soccer_field, draw_players
-from sports.common.ball import BallTracker
+from sports.common.ball import BallTracker, BallAnnotator
 from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
 from sports.configs.soccer import SoccerFieldConfiguration
 
 PLAYER_DETECTION_MODEL_PATH = 'examples/soccer/data/football-player-detection-v9.pt'
 PITCH_DETECTION_MODEL_PATH = 'examples/soccer/data/football-pitch-detection-v10.pt'
-BALL_DETECTION_MODEL_PATH = 'examples/soccer/data/football-ball-detection-v1.pt'
+BALL_DETECTION_MODEL_PATH = 'examples/soccer/data/football-ball-detection-v2.pt'
 
 BALL_CLASS_ID = 0
 GOALKEEPER_CLASS_ID = 1
@@ -216,6 +216,7 @@ def run_ball_detection(source_video_path: str, device: str) -> Iterator[np.ndarr
     ball_detection_model = YOLO(BALL_DETECTION_MODEL_PATH).to(device=device)
     frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
     ball_tracker = BallTracker(buffer_size=20)
+    ball_annotator = BallAnnotator(radius=10, buffer_size=10)
 
     def callback(image_slice: np.ndarray) -> sv.Detections:
         result = ball_detection_model(image_slice, imgsz=640, verbose=False)[0]
@@ -231,7 +232,7 @@ def run_ball_detection(source_video_path: str, device: str) -> Iterator[np.ndarr
         detections = slicer(frame).with_nms(threshold=0.1)
         detections = ball_tracker.update(detections)
         annotated_frame = frame.copy()
-        annotated_frame = TRIANGLE_ANNOTATOR.annotate(annotated_frame, detections)
+        annotated_frame = ball_annotator.annotate(annotated_frame, detections)
         yield annotated_frame
 
 

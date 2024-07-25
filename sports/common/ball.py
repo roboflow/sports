@@ -1,7 +1,91 @@
 from collections import deque
 
+import cv2
 import numpy as np
 import supervision as sv
+
+
+class BallAnnotator:
+    """
+    A class to annotate frames with circles of varying radii and colors.
+
+    Attributes:
+        radius (int): The maximum radius of the circles to be drawn.
+        buffer (deque): A deque buffer to store recent coordinates for annotation.
+        color_palette (sv.ColorPalette): A color palette for the circles.
+        thickness (int): The thickness of the circle borders.
+    """
+
+    def __init__(self, radius: int, buffer_size: int = 5, thickness: int = 2):
+
+        self.color_palette = sv.ColorPalette.from_matplotlib('jet', buffer_size)
+        self.buffer = deque(maxlen=buffer_size)
+        self.radius = radius
+        self.thickness = thickness
+
+    @staticmethod
+    def draw_circle(
+        frame: np.ndarray,
+        xy: np.ndarray,
+        radius: int,
+        color: sv.Color,
+        thickness: int = 2
+    ) -> np.ndarray:
+        """
+        Draws a circle on the frame.
+
+        Args:
+            frame (np.ndarray): The frame on which to draw the circle.
+            xy (np.ndarray): The (x, y) coordinates of the circle center.
+            radius (int): The radius of the circle.
+            color (sv.Color): The color of the circle.
+            thickness (int): The thickness of the circle border. Defaults to 2.
+
+        Returns:
+            np.ndarray: The frame with the drawn circle.
+        """
+        return cv2.circle(frame, tuple(xy), radius, color.as_bgr(), thickness=thickness)
+
+    def interpolate_radius(self, i: int, max_i: int) -> int:
+        """
+        Interpolates the radius between 1 and the maximum radius based on the index.
+
+        Args:
+            i (int): The current index in the buffer.
+            max_i (int): The maximum index in the buffer.
+
+        Returns:
+            int: The interpolated radius.
+        """
+        if max_i == 1:
+            return self.radius
+        return int(1 + i * (self.radius - 1) / (max_i - 1))
+
+    def annotate(self, frame: np.ndarray, detections: sv.Detections) -> np.ndarray:
+        """
+        Annotates the frame with circles based on detections.
+
+        Args:
+            frame (np.ndarray): The frame to annotate.
+            detections (sv.Detections): The detections containing coordinates.
+
+        Returns:
+            np.ndarray: The annotated frame.
+        """
+        xy = detections.get_anchors_coordinates(sv.Position.BOTTOM_CENTER).astype(int)
+        self.buffer.append(xy)
+        for i, xy in enumerate(self.buffer):
+            color = self.color_palette.by_idx(i)
+            interpolated_radius = self.interpolate_radius(i, len(self.buffer))
+            for center in xy:
+                frame = self.draw_circle(
+                    frame=frame,
+                    xy=center,
+                    radius=interpolated_radius,
+                    color=color,
+                    thickness=self.thickness
+                )
+        return frame
 
 
 class BallTracker:
