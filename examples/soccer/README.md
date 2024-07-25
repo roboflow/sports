@@ -41,21 +41,62 @@ Clusters the reduced-dimension features to classify players into two teams.
 
 - `PITCH_DETECTION` - Detects the soccer field boundaries and key points in the video. 
 Useful for identifying and visualizing the layout of the soccer pitch.
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/2e57b9_0-ball-detection.mp4 \
+  --device mps --mode PITCH_DETECTION
+  ```
+
 - `PLAYER_DETECTION` - Detects players, goalkeepers, referees, and the ball in the 
 video. Essential for identifying and tracking the presence of players and other 
 entities on the field.
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/2e57b9_0-player-detection.mp4 \
+  --device mps --mode PLAYER_DETECTION
+  ```
+
 - `BALL_DETECTION` - Detects the ball in the video frames and tracks its position. 
 Useful for following ball movements throughout the match.
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/2e57b9_0-ball-detection.mp4 \
+  --device mps --mode BALL_DETECTION
+  ```
+
 - `PLAYER_TRACKING` - Tracks players across video frames, maintaining consistent 
 identification. Useful for following player movements and positions throughout the 
 match.
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/2e57b9_0-player-tracking.mp4 \
+  --device mps --mode PLAYER_TRACKING
+  ```
+
 - `TEAM_CLASSIFICATION` - Classifies detected players into their respective teams based 
 on their visual features. Helps differentiate between players of different teams for 
 analysis and visualization.
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/2e57b9_0-team-classification.mp4 \
+  --device mps --mode TEAM_CLASSIFICATION
+  ```
+
 - `RADAR` - Combines pitch detection, player detection, tracking, and team 
 classification to generate a radar-like visualization of player positions on the 
 soccer field. Provides a comprehensive overview of player movements and team formations 
 on the field.
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/2e57b9_0-radar.mp4 \
+  --device mps --mode RADAR
+  ```
 
 ## 🗺️ roadmap
 
