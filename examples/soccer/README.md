@@ -9,6 +9,7 @@ We don't have a Python package yet. Install from source in a
 pip install git+https://github.com/roboflow/sports.git
 cd examples/soccer
 pip install -r requirements.txt
+./setup.sh
 ```
 
 ## ⚽ datasets
