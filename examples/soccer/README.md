@@ -44,7 +44,7 @@ Useful for identifying and visualizing the layout of the soccer pitch.
 
   ```bash
   python main.py --source_video_path data/2e57b9_0.mp4 \
-  --target_video_path data/2e57b9_0-ball-detection.mp4 \
+  --target_video_path data/2e57b9_0-pitch-detection.mp4 \
   --device mps --mode PITCH_DETECTION
   ```
 
