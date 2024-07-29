@@ -5,7 +5,7 @@ import setuptools
 HERE = pathlib.Path(__file__).parent
 
 # The text of the README file
-README = (HERE / "README.md").read_text()
+README = (HERE / "README.md").read_text(encoding="utf-8")
 
 setuptools.setup(
     name="sports",
