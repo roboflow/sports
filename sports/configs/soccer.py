@@ -3,7 +3,7 @@ from typing import List, Tuple
 
 
 @dataclass
-class SoccerFieldConfiguration:
+class SoccerPitchConfiguration:
     width: int = 7000  # [cm]
     length: int = 12000  # [cm]
     penalty_box_width: int = 4100  # [cm]

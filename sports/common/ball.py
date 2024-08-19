@@ -23,29 +23,6 @@ class BallAnnotator:
         self.radius = radius
         self.thickness = thickness
 
-    @staticmethod
-    def draw_circle(
-        frame: np.ndarray,
-        xy: np.ndarray,
-        radius: int,
-        color: sv.Color,
-        thickness: int = 2
-    ) -> np.ndarray:
-        """
-        Draws a circle on the frame.
-
-        Args:
-            frame (np.ndarray): The frame on which to draw the circle.
-            xy (np.ndarray): The (x, y) coordinates of the circle center.
-            radius (int): The radius of the circle.
-            color (sv.Color): The color of the circle.
-            thickness (int): The thickness of the circle border. Defaults to 2.
-
-        Returns:
-            np.ndarray: The frame with the drawn circle.
-        """
-        return cv2.circle(frame, tuple(xy), radius, color.as_bgr(), thickness=thickness)
-
     def interpolate_radius(self, i: int, max_i: int) -> int:
         """
         Interpolates the radius between 1 and the maximum radius based on the index.
@@ -78,11 +55,11 @@ class BallAnnotator:
             color = self.color_palette.by_idx(i)
             interpolated_radius = self.interpolate_radius(i, len(self.buffer))
             for center in xy:
-                frame = self.draw_circle(
-                    frame=frame,
-                    xy=center,
+                frame = cv2.circle(
+                    img=frame,
+                    center=tuple(center),
                     radius=interpolated_radius,
-                    color=color,
+                    color=color.as_bgr(),
                     thickness=self.thickness
                 )
         return frame

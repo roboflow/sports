@@ -9,11 +9,11 @@ import supervision as sv
 from tqdm import tqdm
 from ultralytics import YOLO
 
-from sports.annotators.soccer import draw_soccer_field, draw_players
+from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
 from sports.common.ball import BallTracker, BallAnnotator
 from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
-from sports.configs.soccer import SoccerFieldConfiguration
+from sports.configs.soccer import SoccerPitchConfiguration
 
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
@@ -26,7 +26,7 @@ PLAYER_CLASS_ID = 2
 REFEREE_CLASS_ID = 3
 
 STRIDE = 60
-CONFIG = SoccerFieldConfiguration()
+CONFIG = SoccerPitchConfiguration()
 
 COLORS = ['#FF1493', '#00BFFF', '#FF6347', '#FFD700']
 VERTEX_LABEL_ANNOTATOR = sv.VertexLabelAnnotator(
@@ -142,19 +142,19 @@ def render_radar(
     xy = detections.get_anchors_coordinates(anchor=sv.Position.BOTTOM_CENTER)
     transformed_xy = transformer.transform_points(points=xy)
 
-    radar = draw_soccer_field(config=CONFIG)
-    radar = draw_players(
+    radar = draw_pitch(config=CONFIG)
+    radar = draw_points_on_pitch(
         config=CONFIG, xy=transformed_xy[color_lookup == 0],
-        face_color=sv.Color.from_hex(COLORS[0]), radius=20, soccer_field=radar)
-    radar = draw_players(
+        face_color=sv.Color.from_hex(COLORS[0]), radius=20, pitch=radar)
+    radar = draw_points_on_pitch(
         config=CONFIG, xy=transformed_xy[color_lookup == 1],
-        face_color=sv.Color.from_hex(COLORS[1]), radius=20, soccer_field=radar)
-    radar = draw_players(
+        face_color=sv.Color.from_hex(COLORS[1]), radius=20, pitch=radar)
+    radar = draw_points_on_pitch(
         config=CONFIG, xy=transformed_xy[color_lookup == 2],
-        face_color=sv.Color.from_hex(COLORS[2]), radius=20, soccer_field=radar)
-    radar = draw_players(
+        face_color=sv.Color.from_hex(COLORS[2]), radius=20, pitch=radar)
+    radar = draw_points_on_pitch(
         config=CONFIG, xy=transformed_xy[color_lookup == 3],
-        face_color=sv.Color.from_hex(COLORS[3]), radius=20, soccer_field=radar)
+        face_color=sv.Color.from_hex(COLORS[3]), radius=20, pitch=radar)
     return radar
 
 
