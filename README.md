@@ -43,6 +43,13 @@ Visit [Roboflow Universe](https://universe.roboflow.com/) and explore other spor
 
 https://github.com/roboflow/sports/assets/26109316/7ad414dd-cc4e-476d-9af3-02dfdf029205
 
+## 🌟 Community Showcase
+
+![NFL Big Heads](https://substackcdn.com/image/fetch/w_1456,c_limit,f_webp,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F8300748a-de8f-4fa2-a4dc-48b55a127e8c_320x320.gif)
+
+Hart Woolery built [realtime AI for making 'big heads'](https://hart.substack.com/p/how-i-built-realtime-ai-for-broadcast) for the Superbowl with Roboflow.
+
+
 ## 🏆 contribution
 
 We love your input! [Let us know](https://github.com/roboflow/sports/issues) what else we should build!
