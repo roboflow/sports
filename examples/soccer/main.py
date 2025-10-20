@@ -11,7 +11,6 @@ from ultralytics import YOLO
 
 from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
 from sports.common.ball import BallTracker, BallAnnotator
-from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
 from sports.configs.soccer import SoccerPitchConfiguration
 
@@ -195,7 +194,7 @@ def run_player_detection(source_video_path: str, device: str) -> Iterator[np.nda
     player_detection_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
     for frame in frame_generator:
-        result = player_detection_model(frame, imgsz=1280, verbose=False)[0]
+        result = player_detection_model(frame, imgsz=640, verbose=False)[0]
         detections = sv.Detections.from_ultralytics(result)
 
         annotated_frame = frame.copy()
@@ -226,7 +225,7 @@ def run_ball_detection(source_video_path: str, device: str) -> Iterator[np.ndarr
 
     slicer = sv.InferenceSlicer(
         callback=callback,
-        overlap_filter_strategy=sv.OverlapFilter.NONE,
+        overlap_filter=sv.OverlapFilter.NONE,
         slice_wh=(640, 640),
     )
 
@@ -277,6 +276,8 @@ def run_team_classification(source_video_path: str, device: str) -> Iterator[np.
     Yields:
         Iterator[np.ndarray]: Iterator over annotated frames.
     """
+    # Lazy import to avoid importing UMAP when not needed by other modes
+    from sports.common.team import TeamClassifier
     player_detection_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     frame_generator = sv.get_video_frames_generator(
         source_path=source_video_path, stride=STRIDE)
@@ -324,6 +325,8 @@ def run_team_classification(source_video_path: str, device: str) -> Iterator[np.
 
 
 def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
+    # Lazy import to avoid importing UMAP when not needed by other modes
+    from sports.common.team import TeamClassifier
     player_detection_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
     pitch_detection_model = YOLO(PITCH_DETECTION_MODEL_PATH).to(device=device)
     frame_generator = sv.get_video_frames_generator(
