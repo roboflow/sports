@@ -70,7 +70,7 @@ class TeamClassifier:
         Returns:
             np.ndarray: Extracted features as a numpy array.
         """
-        crops = [sv.cv2_to_pillow(crop) for crop in crops]
+        crops = [sv.cv2_to_pillow(crop) for crop in crops if crop.size != 0]
         batches = create_batches(crops, self.batch_size)
         data = []
         with torch.no_grad():
