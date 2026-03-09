@@ -110,6 +110,30 @@ on the field.
 
   https://github.com/user-attachments/assets/263b4cd0-2185-4ed3-9be2-cf4d8f5bfa67
 
+## 🎬 keyframe generation
+
+Generate square-crop `(t, o)` keyframes (timestamp in seconds, offset in pixels from the
+left edge of a 1920×1080 frame) using the provided models:
+
+```bash
+python generate_keyframes.py \
+  --source_video_path data/2e57b9_0.mp4 \
+  --output_path data/2e57b9_0-keyframes.json \
+  --device mps
+```
+
+The output JSON looks like:
+
+```json
+[
+  {"t": 0.0, "o": 256},
+  {"t": 4.8, "o": 312}
+]
+```
+
+Tune smoothing, motion limits, and compression with the CLI flags (`--smoothing_alpha`,
+`--max_speed`, `--epsilon`, etc.) to match your editing workflow.
+
 ## 🗺️ roadmap
 
 - [ ] Add smoothing to eliminate flickering in RADAR mode.
