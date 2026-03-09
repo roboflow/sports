@@ -1,5 +1,11 @@
 """Pipelines for higher level sports video processing tasks."""
 
-from .keyframes import Keyframe, KeyframeGenerator  # noqa: F401
+from .keyframes import (  # noqa: F401
+    FOOTBALL,
+    TENNIS,
+    Keyframe,
+    KeyframeGenerator,
+    SportConfig,
+)
 
-__all__ = ["Keyframe", "KeyframeGenerator"]
+__all__ = ["FOOTBALL", "TENNIS", "Keyframe", "KeyframeGenerator", "SportConfig"]

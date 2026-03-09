@@ -15,13 +15,7 @@ authors = [
 dependencies = [
   "supervision",
   "numpy",
-  "opencv-python",
-  "transformers",
-  "umap-learn",
-  "scikit-learn",
-  "tqdm",
-  "sentencepiece",
-  "protobuf"
+  "ultralytics>=8.3.237",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",

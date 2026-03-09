@@ -1,17 +1,15 @@
 import argparse
 import json
-import os
+import sys
 from typing import List
 
-from sports.pipelines import KeyframeGenerator, Keyframe
+from sports.pipelines import FOOTBALL, TENNIS, Keyframe, KeyframeGenerator, SportConfig
 
-PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PLAYER_DETECTION_MODEL_PATH = os.path.join(
-    PARENT_DIR, "data/football-player-detection.pt"
-)
-BALL_DETECTION_MODEL_PATH = os.path.join(
-    PARENT_DIR, "data/football-ball-detection.pt"
-)
+SPORTS: dict[str, SportConfig] = {
+    "football": FOOTBALL,
+    "soccer": FOOTBALL,
+    "tennis": TENNIS,
+}
 
 
 def write_output(path: str, keyframes: List[Keyframe]) -> None:
@@ -22,44 +20,46 @@ def write_output(path: str, keyframes: List[Keyframe]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate (t, o) crop keyframes for soccer footage."
+        description="Generate (t, o) crop keyframes for sports footage using SAM 3."
     )
     parser.add_argument("--source_video_path", type=str, required=True)
+    parser.add_argument(
+        "--sport",
+        type=str,
+        default="football",
+        choices=list(SPORTS.keys()),
+        help="Sport type. Default: football.",
+    )
     parser.add_argument(
         "--output_path",
         type=str,
         help="Where to write keyframes JSON. Prints to stdout if omitted.",
     )
-    parser.add_argument("--device", type=str, default="cpu")
-    parser.add_argument("--stride", type=int, default=1)
+    parser.add_argument("--model_path", type=str, default="sam3.pt")
+    parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--crop_width", type=int, default=1080)
     parser.add_argument("--margin", type=int, default=32)
     parser.add_argument("--smoothing_alpha", type=float, default=0.25)
     parser.add_argument("--max_speed", type=float, default=480.0)
-    parser.add_argument("--epsilon", type=float, default=12.0)
-    parser.add_argument("--player_confidence", type=float, default=0.35)
-    parser.add_argument("--ball_confidence", type=float, default=0.25)
     parser.add_argument(
-        "--disable_ball",
-        action="store_true",
-        help="Skip ball detection when computing action bounds.",
+        "--epsilon_frac",
+        type=float,
+        default=0.008,
+        help="RDP tolerance as fraction of frame width (default 0.008 = 0.8%%).",
     )
     args = parser.parse_args()
 
-    ball_model_path = None if args.disable_ball else BALL_DETECTION_MODEL_PATH
+    sport = SPORTS[args.sport]
 
     generator = KeyframeGenerator(
-        player_model_path=PLAYER_DETECTION_MODEL_PATH,
-        ball_model_path=ball_model_path,
+        sport=sport,
+        model_path=args.model_path,
         device=args.device,
-        stride=args.stride,
         crop_width_px=args.crop_width,
         margin_px=args.margin,
         smoothing_alpha=args.smoothing_alpha,
         max_speed_px_per_s=args.max_speed,
-        compression_epsilon_px=args.epsilon,
-        player_confidence_threshold=args.player_confidence,
-        ball_confidence_threshold=args.ball_confidence,
+        epsilon_frac=args.epsilon_frac,
     )
 
     keyframes = generator.generate(args.source_video_path)
