@@ -1,159 +1,152 @@
-from __future__ import annotations
+"""Modal HTTP endpoint — auto-crop keyframe generation using SAM 3.
 
-import os
-import tempfile
-from typing import Optional
+POST /crop
+  Body: { videoUrl, format, videoWidth, videoHeight, sport? }
+  Returns: [{ t: float, o: int }, ...]
+
+Set window.__AUTO_CROP_URL__ = "<deployed url>/crop" in the browser to wire
+the LIGR VideoFormatEditor AUTO CROP button to this endpoint.
+"""
+import re
 
 import modal
 
+app = modal.App("auto-crop")
 
-app = modal.App("sports-soccer-edit")
-
+# Volume caches SAM 3 weights across cold starts (~2 GB download avoided).
+model_volume = modal.Volume.from_name("sam3-weights", create_if_missing=True)
+MODEL_DIR = "/models"
 
 image = (
     modal.Image.debian_slim()
-    .apt_install("ffmpeg", "git")
+    .apt_install("ffmpeg", "libgl1", "libglib2.0-0")
     .pip_install(
-        "boto3",
-        "ultralytics>=8.0.0",
+        "ultralytics>=8.3.237",
         "supervision>=0.21.0",
         "opencv-python-headless",
         "numpy",
-        # CPU by default; switch to CUDA wheel by editing below or passing device=cuda
-        "torch",
-        "torchvision",
-        "torchaudio",
+        "requests",
+        "fastapi[standard]",
+        "openai-clip",
     )
-    .copy_local_dir(".", "/workspace")
+    .pip_install(
+        "torch==2.4.1+cu121",
+        "torchvision==0.19.1+cu121",
+        extra_options="--index-url https://download.pytorch.org/whl/cu121",
+    )
+    .add_local_python_source("sports")
 )
 
+SPORTS_MAP = {
+    "football": "football",
+    "soccer": "football",
+    "tennis": "tennis",
+}
 
-@app.function(image=image, gpu="T4", secrets=[modal.Secret.from_name("aws-creds")])
-def run_remote(
-    input_s3: str,
-    output_s3: str,
-    *,
-    device: str = "cuda",
-    transition_s: float = 0.5,
-    stride: int = 1,
-    crop_width: int = 1080,
-    margin: int = 32,
-    smoothing_alpha: float = 0.25,
-    max_speed: float = 480.0,
-    epsilon: float = 12.0,
-    disable_ball: bool = False,
-    player_model_s3: str | None = None,
-    ball_model_s3: str | None = None,
-) -> str:
+
+_FORMAT_RATIOS = {
+    # LIGR FormatLabels enum values
+    "vertical": (9, 16),
+    "square": (1, 1),
+    "standard": (4, 3),
+    "portrait": (4, 5),
+}
+
+
+def _parse_crop_width(format_str: str, video_height: int) -> int:
+    """Compute crop width in pixels from format string and source video height.
+
+    Accepts either LIGR FormatLabels enum values ("vertical", "square", …) or
+    explicit W:H strings ("9:16", "1:1", …).
     """
-    Remote GPU entrypoint to generate keyframes and render the final video.
-    - Expects AWS credentials via a Modal Secret named `aws-creds`.
-    - input_s3/output_s3 like s3://bucket/key.mp4
-    """
-    import boto3
-    import subprocess
-    import sys
-    from urllib.parse import urlparse
-
-    def s3_download(s3_uri: str, dst_path: str) -> None:
-        u = urlparse(s3_uri)
-        s3 = boto3.client("s3")
-        s3.download_file(u.netloc, u.path.lstrip("/"), dst_path)
-
-    def s3_upload(src_path: str, s3_uri: str) -> None:
-        u = urlparse(s3_uri)
-        s3 = boto3.client("s3")
-        s3.upload_file(src_path, u.netloc, u.path.lstrip("/"))
-
-    repo_root = "/workspace"
-    # Mount local repo at runtime for freshest code; expects caller runs `modal run` from repo root
-    # If running via schedule/deploy, consider packaging code into the image instead.
-
-    here = os.path.join(repo_root, "examples/soccer")
-    gen_py = os.path.join(here, "generate_keyframes.py")
-    rend_py = os.path.join(here, "render_from_keyframes.py")
-
-    with tempfile.TemporaryDirectory() as td:
-        inp = os.path.join(td, "input.mp4")
-        outp = os.path.join(td, "output.mp4")
-        keyf = os.path.join(td, "keyframes.json")
-
-        s3_download(input_s3, inp)
-
-        # Optional: download models into expected paths
-        data_dir = os.path.join(here, "data")
-        os.makedirs(data_dir, exist_ok=True)
-        player_dst = os.path.join(data_dir, "football-player-detection.pt")
-        ball_dst = os.path.join(data_dir, "football-ball-detection.pt")
-        if player_model_s3:
-            s3_download(player_model_s3, player_dst)
-        if ball_model_s3:
-            s3_download(ball_model_s3, ball_dst)
-
-        gen_cmd = [
-            sys.executable,
-            gen_py,
-            "--source_video_path",
-            inp,
-            "--output_path",
-            keyf,
-            "--device",
-            device,
-            "--stride",
-            str(stride),
-            "--crop_width",
-            str(crop_width),
-            "--margin",
-            str(margin),
-            "--smoothing_alpha",
-            str(smoothing_alpha),
-            "--max_speed",
-            str(max_speed),
-            "--epsilon",
-            str(epsilon),
-        ]
-        if disable_ball or not os.path.exists(ball_dst):
-            gen_cmd.append("--disable_ball")
-        subprocess.check_call(gen_cmd)
-
-        rend_cmd = [
-            sys.executable,
-            rend_py,
-            "--input_video",
-            inp,
-            "--keyframes_json",
-            keyf,
-            "--output",
-            outp,
-            "--transition",
-            str(transition_s),
-        ]
-        subprocess.check_call(rend_cmd)
-
-        s3_upload(outp, output_s3)
-
-    return output_s3
+    if format_str in _FORMAT_RATIOS:
+        w, h = _FORMAT_RATIOS[format_str]
+        return max(1, round(video_height * w / h))
+    m = re.search(r"(\d+)\s*:\s*(\d+)", format_str)
+    if m:
+        w, h = int(m.group(1)), int(m.group(2))
+        return max(1, round(video_height * w / h))
+    return video_height  # fallback: 1:1
 
 
-@app.local_entrypoint()
-def main():
-    """
-    Example local launch:
-    modal run examples/soccer/remote/modal_app.py \
-      --input s3://my-bucket/in/clip.mp4 --output s3://my-bucket/out/clip_edit.mp4
-    """
-    import argparse
+@app.function(
+    image=image,
+    gpu="T4",
+    volumes={MODEL_DIR: model_volume},
+    timeout=600,
+    # Keep one warm container so the team doesn't wait for cold starts.
+    min_containers=1,
+)
+@modal.asgi_app()
+def endpoint():
+    import os
+    import tempfile
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--device", default="cuda")
-    parser.add_argument("--transition", type=float, default=0.5)
-    args = parser.parse_args()
+    import requests as http
+    from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+    from fastapi.middleware.cors import CORSMiddleware
 
-    # Attach the local repo at /workspace so we use your current code.
-    # You must run `modal run` from the repository root.
-    with modal.Mount.from_local_dir(os.getcwd(), remote_path="/workspace"):
-        print(run_remote.call(args.input, args.output, device=args.device, transition_s=args.transition))
+    from sports.pipelines import FOOTBALL, TENNIS, KeyframeGenerator
 
+    api = FastAPI(title="Auto-Crop")
+    api.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["POST", "GET", "OPTIONS"],
+        allow_headers=["*"],
+    )
 
+    SPORTS = {"football": FOOTBALL, "tennis": TENNIS}
+
+    @api.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    @api.post("/crop")
+    async def crop(
+        videoFile: UploadFile = File(...),
+        format: str = Form("9:16"),
+        videoHeight: int = Form(1080),
+        sport: str = Form("football"),
+    ):
+        try:
+            import shutil
+            from ultralytics.utils.downloads import attempt_download_asset
+
+            sport_key = SPORTS_MAP.get(sport.lower(), "football")
+            sport_config = SPORTS[sport_key]
+            crop_width_px = _parse_crop_width(format, videoHeight)
+
+            print(f"[auto-crop] sport={sport_key} format={format!r} "
+                  f"crop_width={crop_width_px}px filename={videoFile.filename}")
+
+            model_path = os.path.join(MODEL_DIR, "sam3_b.pt")
+
+            if not os.path.exists(model_path):
+                print("[auto-crop] model not found, downloading...")
+                tmp = attempt_download_asset("sam3_b.pt")
+                shutil.copy(tmp, model_path)
+                model_volume.commit()
+                print(f"[auto-crop] model saved to {model_path}")
+
+            with tempfile.TemporaryDirectory() as td:
+                video_path = os.path.join(td, "input.mp4")
+                with open(video_path, "wb") as f:
+                    while chunk := await videoFile.read(1 << 20):
+                        f.write(chunk)
+
+                gen = KeyframeGenerator(
+                    sport=sport_config,
+                    model_path=model_path,
+                    device="cuda",
+                    crop_width_px=crop_width_px,
+                )
+                keyframes = gen.generate(video_path)
+
+            print(f"[auto-crop] generated {len(keyframes)} keyframes")
+            model_volume.commit()
+            return [kf.as_dict() for kf in keyframes]
+        except Exception as exc:
+            raise HTTPException(500, str(exc)) from exc
+
+    return api
