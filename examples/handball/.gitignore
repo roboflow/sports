@@ -1,0 +1,4 @@
+data/
+notebooks/*.pt
+notebooks/*/
+notebooks/runs/
