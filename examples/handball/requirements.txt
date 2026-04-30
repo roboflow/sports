@@ -1,0 +1,5 @@
+numpy<2
+opencv-python
+roboflow
+supervision
+ultralytics
