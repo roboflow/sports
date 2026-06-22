@@ -1,0 +1,461 @@
+"""analytics/homography.py — demo-quality pitch homography for player-motion analytics.
+
+Ported from world_cup_projects/common/pitch.py and pipeline.py.
+Imports primitives from the sports library where equivalent; does NOT vendor
+ViewTransformer, draw_pitch, or draw_points_on_pitch.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable
+
+import cv2
+import numpy as np
+import numpy.typing as npt
+import supervision as sv
+
+from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
+from sports.common.view import ViewTransformer
+from sports.configs.soccer import SoccerPitchConfiguration
+
+# ── constants ──────────────────────────────────────────────────────────────────
+HOMOGRAPHY_RANSAC_REPROJ_THRESH = 10.0
+SPEED_GATE_MAX_REPROJ_PX = 11.0
+DISPLAY_MIN_KEYPOINTS = 4
+PITCH_CONFIG = SoccerPitchConfiguration()
+
+
+# ---------------------------------------------------------------------------
+# RansacViewTransformer — sports ViewTransformer + RANSAC inverse trick
+# ---------------------------------------------------------------------------
+
+class RansacViewTransformer(ViewTransformer):
+    """ViewTransformer with RANSAC reprojection gating (world_cup RANSAC behaviour).
+
+    Fits H via the *inverse* path (pitch→image) so the RANSAC threshold is in
+    image pixels, then inverts — matching the world_cup defaults.
+    Subclasses sports.common.view.ViewTransformer so it is a drop-in replacement.
+    """
+
+    def __init__(
+        self,
+        source: npt.NDArray,
+        target: npt.NDArray,
+        *,
+        use_ransac: bool = True,
+        ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
+    ) -> None:
+        src = np.asarray(source, dtype=np.float32)
+        dst = np.asarray(target, dtype=np.float32)
+        if src.shape != dst.shape or src.ndim != 2 or src.shape[1] != 2:
+            raise ValueError("source/target must be matching (N, 2) arrays")
+        if use_ransac and len(src) >= 4:
+            m_inv, _ = cv2.findHomography(
+                dst, src, cv2.RANSAC, ransacReprojThreshold=ransac_thresh
+            )
+            if m_inv is not None:
+                try:
+                    self.m = np.linalg.inv(m_inv)
+                    return
+                except np.linalg.LinAlgError:
+                    pass
+        m, _ = cv2.findHomography(src, dst)
+        if m is None:
+            raise ValueError("Homography matrix could not be calculated.")
+        self.m = m
+
+
+# ---------------------------------------------------------------------------
+# Keypoint alignment helpers
+# ---------------------------------------------------------------------------
+
+def pitch_vertex_count(config: SoccerPitchConfiguration = PITCH_CONFIG) -> int:
+    return len(config.vertices)
+
+
+def align_pitch_keypoints(
+    keypoints: sv.KeyPoints,
+    *,
+    n_vertices: int | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Normalise keypoint arrays to the pitch template vertex count (pad/truncate)."""
+    n = n_vertices or pitch_vertex_count()
+    if keypoints.xy.shape[0] == 0:
+        return np.zeros((n, 2), dtype=np.float32), np.zeros(n, dtype=np.float32)
+    xy = keypoints.xy[0].astype(np.float32)
+    if keypoints.confidence is None:
+        conf = np.ones(len(xy), dtype=np.float32)
+    else:
+        conf = keypoints.confidence[0].astype(np.float32)
+    if len(conf) < n:
+        conf = np.pad(conf, (0, n - len(conf)))
+    else:
+        conf = conf[:n]
+    if xy.shape[0] < n:
+        xy = np.pad(xy, ((0, n - xy.shape[0]), (0, 0)), constant_values=0)
+    elif xy.shape[0] > n:
+        xy = xy[:n]
+    return xy, conf
+
+
+def pitch_keypoint_accept_mask(
+    xy: np.ndarray,
+    conf: np.ndarray,
+    *,
+    confidence: float = 0.5,
+) -> np.ndarray:
+    """True where a keypoint is accepted for homography fitting."""
+    n = len(conf)
+    if n == 0:
+        return np.zeros(0, dtype=bool)
+    if len(xy) < n:
+        xy = np.pad(xy.astype(np.float32), ((0, n - len(xy)), (0, 0)), constant_values=0)
+    elif len(xy) > n:
+        xy = xy[:n]
+    return (conf > confidence) & (xy[:, 0] > 1) & (xy[:, 1] > 1)
+
+
+def keypoints_from_inference_field(
+    inference_result,
+    *,
+    n_vertices: int | None = None,
+) -> sv.KeyPoints:
+    """Map Roboflow Inference keypoints into fixed pitch vertex slots by class_id.
+
+    Inference omits low-confidence vertices, so sequential packing mis-aligns
+    landmarks after the first missing point. This maps by class_id instead.
+    """
+    n = n_vertices or pitch_vertex_count()
+    if hasattr(inference_result, "model_dump"):
+        inference_result = inference_result.model_dump(by_alias=True, exclude_none=True)
+    elif hasattr(inference_result, "dict"):
+        inference_result = inference_result.dict(exclude_none=True, by_alias=True)
+
+    predictions = inference_result.get("predictions") or []
+    if not predictions:
+        return sv.KeyPoints.empty()
+
+    prediction = max(predictions, key=lambda p: float(p.get("confidence", 0.0)))
+    xy = np.zeros((1, n, 2), dtype=np.float32)
+    conf = np.zeros((1, n), dtype=np.float32)
+
+    for kp in prediction.get("keypoints") or []:
+        idx = int(kp.get("class_id", -1))
+        if idx < 0 or idx >= n:
+            continue
+        xy[0, idx, 0] = float(kp["x"])
+        xy[0, idx, 1] = float(kp["y"])
+        conf[0, idx] = float(kp.get("confidence", 0.0))
+
+    return sv.KeyPoints(xy=xy, confidence=conf)
+
+
+# ---------------------------------------------------------------------------
+# Internal homography helpers
+# ---------------------------------------------------------------------------
+
+def _mean_reproj_px(
+    transformer: ViewTransformer, src: np.ndarray, dst: np.ndarray
+) -> float:
+    """Average reprojection error in image pixels (pitch→image→compare with src)."""
+    try:
+        m_inv = np.linalg.inv(transformer.m)
+    except np.linalg.LinAlgError:
+        return float("inf")
+    reproj = cv2.perspectiveTransform(
+        dst.reshape(-1, 1, 2).astype(np.float32), m_inv
+    ).reshape(-1, 2)
+    return float(np.linalg.norm(reproj - src, axis=1).mean())
+
+
+def _flip_pitch_x_targets(dst: np.ndarray, length: float) -> np.ndarray:
+    out = dst.copy()
+    out[:, 0] = length - out[:, 0]
+    return out
+
+
+def _orientation_matches_anchor(
+    candidate: ViewTransformer,
+    anchor: ViewTransformer,
+    src: np.ndarray,
+    *,
+    min_corr: float = 0.85,
+) -> bool:
+    """Reject H that mirrors the pitch left/right vs the orientation anchor."""
+    if len(src) < 4:
+        return True
+    pa = anchor.transform_points(src)
+    pc = candidate.transform_points(src)
+    corr = np.corrcoef(pa[:, 0], pc[:, 0])[0, 1]
+    if not np.isfinite(corr):
+        return True
+    return float(corr) >= min_corr
+
+
+# ---------------------------------------------------------------------------
+# homography_from_keypoints_radar — ungated minimap H (for gaps / traces)
+# ---------------------------------------------------------------------------
+
+def homography_from_keypoints_radar(
+    keypoints: sv.KeyPoints | None,
+    *,
+    config: SoccerPitchConfiguration = PITCH_CONFIG,
+    confidence: float = 0.9,
+    min_keypoints: int = DISPLAY_MIN_KEYPOINTS,
+    use_ransac: bool = False,
+) -> ViewTransformer | None:
+    """Per-frame minimap H from confidence-gated keypoints (no reprojection gate)."""
+    if keypoints is None or keypoints.xy.shape[0] == 0:
+        return None
+    n = pitch_vertex_count(config)
+    xy, conf = align_pitch_keypoints(keypoints, n_vertices=n)
+    mask = pitch_keypoint_accept_mask(xy, conf, confidence=confidence)
+    if mask.sum() < min_keypoints:
+        return None
+    src = xy[mask].astype(np.float32)
+    dst = np.array(config.vertices, dtype=np.float32)[mask]
+    try:
+        return RansacViewTransformer(source=src, target=dst, use_ransac=use_ransac)
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# PitchHomographyTracker
+# ---------------------------------------------------------------------------
+
+class PitchHomographyTracker:
+    """Sequence-stable homography: per-frame RANSAC fit + orientation lock + reproj gate.
+
+    Each frame uses only its own confidence-filtered keypoints (no cross-frame stacking).
+    Stability via orientation lock after the first good fit + reprojection gate.
+    """
+
+    def __init__(
+        self,
+        *,
+        confidence: float = 0.9,
+        ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
+        max_reproj_px: float = SPEED_GATE_MAX_REPROJ_PX,
+        config: SoccerPitchConfiguration | None = None,
+    ) -> None:
+        self.confidence = confidence
+        self.ransac_thresh = ransac_thresh
+        self.max_reproj_px = max_reproj_px
+        self.config = config or PITCH_CONFIG
+        self._targets = np.array(self.config.vertices, dtype=np.float32)
+        self._locked: ViewTransformer | None = None
+        self._orientation_anchor: ViewTransformer | None = None
+
+    def _frame_correspondences(
+        self, keypoints: sv.KeyPoints
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        n = len(self._targets)
+        xy, conf = align_pitch_keypoints(keypoints, n_vertices=n)
+        mask = pitch_keypoint_accept_mask(xy, conf, confidence=self.confidence)
+        if mask.sum() < DISPLAY_MIN_KEYPOINTS:
+            return None
+        return xy[mask].astype(np.float32), self._targets[mask]
+
+    def _fit_frame(
+        self, src: np.ndarray, dst: np.ndarray
+    ) -> tuple[ViewTransformer, np.ndarray] | None:
+        length = float(self.config.length)
+        candidates: list[tuple[float, ViewTransformer, np.ndarray]] = []
+        for target in (dst, _flip_pitch_x_targets(dst, length)):
+            try:
+                t = RansacViewTransformer(
+                    source=src,
+                    target=target,
+                    use_ransac=True,
+                    ransac_thresh=self.ransac_thresh,
+                )
+            except ValueError:
+                continue
+            err = _mean_reproj_px(t, src, target)
+            candidates.append((err, t, target))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0])
+        for err, t, target in candidates:
+            if err > self.max_reproj_px:
+                continue
+            if self._orientation_anchor is None or _orientation_matches_anchor(
+                t, self._orientation_anchor, src
+            ):
+                return t, target
+        # return best regardless of orientation if nothing passes the anchor check
+        _, t, target = candidates[0]
+        return t, target
+
+    def update(
+        self, keypoints: sv.KeyPoints | None
+    ) -> tuple[ViewTransformer | None, ViewTransformer | None]:
+        """Return (speed_transformer, radar_transformer).
+
+        speed_transformer is None when the frame fails the reprojection gate.
+        radar_transformer holds the last accepted H (orientation-locked).
+        """
+        if keypoints is None or keypoints.xy.shape[0] == 0:
+            return None, self._locked
+
+        pair = self._frame_correspondences(keypoints)
+        if pair is None:
+            return None, self._locked
+
+        src_now, dst_now = pair
+        fitted = self._fit_frame(src_now, dst_now)
+        if fitted is None:
+            return None, self._locked
+
+        cand_t, target = fitted
+        err = _mean_reproj_px(cand_t, src_now, target)
+        if err <= self.max_reproj_px:
+            if self._orientation_anchor is None:
+                self._orientation_anchor = cand_t
+            self._locked = cand_t
+            return cand_t, self._locked
+
+        # RANSAC failed gate — try plain fallback just for radar lock
+        if self._locked is None:
+            try:
+                fallback = RansacViewTransformer(
+                    source=src_now, target=dst_now, use_ransac=False
+                )
+                self._locked = fallback
+            except ValueError:
+                pass
+        return None, self._locked
+
+
+# ---------------------------------------------------------------------------
+# replay_tracker_transforms — re-gate from cached keypoints (no disk cache)
+# ---------------------------------------------------------------------------
+
+def replay_tracker_transforms(
+    keypoints_by_frame: dict[int, sv.KeyPoints | None],
+    *,
+    confidence: float = 0.9,
+    max_reproj_px: float = SPEED_GATE_MAX_REPROJ_PX,
+    ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
+    config: SoccerPitchConfiguration = PITCH_CONFIG,
+) -> tuple[dict[int, ViewTransformer | None], dict[int, ViewTransformer | None]]:
+    """Re-derive gated speed + radar homographies from already-detected keypoints.
+
+    No disk cache (in-memory only).
+    """
+    tracker = PitchHomographyTracker(
+        confidence=confidence,
+        ransac_thresh=ransac_thresh,
+        max_reproj_px=max_reproj_px,
+        config=config,
+    )
+    transforms: dict[int, ViewTransformer | None] = {}
+    radar_transforms: dict[int, ViewTransformer | None] = {}
+    for frame_idx in sorted(int(fi) for fi in keypoints_by_frame):
+        kps = keypoints_by_frame.get(frame_idx)
+        speed_t, radar_t = tracker.update(kps)
+        transforms[frame_idx] = speed_t
+        radar_transforms[frame_idx] = radar_t
+    return transforms, radar_transforms
+
+
+# ---------------------------------------------------------------------------
+# MetricContext
+# ---------------------------------------------------------------------------
+
+@dataclass
+class MetricContext:
+    """Per-frame speed H, radar H, and pitch keypoints (in-memory; no disk cache)."""
+
+    transforms: dict[int, Any]       # gated speed H per frame (may be None)
+    radar_transforms: dict[int, Any]  # orientation-locked radar H per frame
+    keypoints: dict[int, Any]         # raw sv.KeyPoints per frame
+
+    @property
+    def speed_transforms(self) -> dict[int, Any]:
+        """Gated speed H (non-None only) — for compute_kinematics distance."""
+        return {int(fi): t for fi, t in self.transforms.items() if t is not None}
+
+    def speed_transforms_gap_filled(self, confidence: float = 0.9) -> dict[int, Any]:
+        """Speed H per frame: gated where available, else ungated keypoint H on gap frames.
+
+        Used for the displayed Kalman speed badge so it stays continuous through
+        frames the reprojection gate rejects. Distance integration still uses the
+        gated-only speed_transforms.
+        """
+        ungated = self.keypoint_radar_transforms(confidence)
+        filled: dict[int, Any] = {}
+        for fi in self.transforms:
+            gated = self.transforms[fi]
+            t = gated if gated is not None else ungated.get(int(fi))
+            if t is not None:
+                filled[int(fi)] = t
+        return filled
+
+    def keypoint_radar_transforms(self, confidence: float = 0.9) -> dict[int, Any]:
+        """Per-frame ungated sports-radar H from keypoints (radar minimap / traces).
+
+        Memoized per confidence level.
+        """
+        cache = self.__dict__.setdefault("_kp_radar_cache", {})
+        key = round(float(confidence), 6)
+        if key not in cache:
+            kps = self.keypoints or {}
+            cache[key] = {
+                int(fi): homography_from_keypoints_radar(k, confidence=confidence)
+                for fi, k in kps.items()
+            }
+        return cache[key]
+
+
+# ---------------------------------------------------------------------------
+# ensure_pitch_homography_maps — build MetricContext from video (no disk cache)
+# ---------------------------------------------------------------------------
+
+def ensure_pitch_homography_maps(
+    source_video_path: str,
+    pitch_detector_fn: Callable[[np.ndarray], sv.KeyPoints],
+    *,
+    fps: float,
+    max_frames: int | None = None,
+    pitch_confidence: float = 0.9,
+) -> MetricContext:
+    """Run pitch keypoint detection on every frame and build gated homographies.
+
+    No disk caching — all maps are held in memory.
+    """
+    tracker = PitchHomographyTracker(confidence=pitch_confidence)
+    transforms: dict[int, ViewTransformer | None] = {}
+    radar_transforms: dict[int, ViewTransformer | None] = {}
+    keypoints_by_frame: dict[int, sv.KeyPoints | None] = {}
+
+    cap = cv2.VideoCapture(source_video_path)
+    if not cap.isOpened():
+        raise FileNotFoundError(f"Cannot open video: {source_video_path}")
+
+    frame_idx = 0
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_idx += 1
+            if max_frames is not None and frame_idx > max_frames:
+                break
+            kps = pitch_detector_fn(frame)
+            keypoints_by_frame[frame_idx] = kps
+            speed_t, radar_t = tracker.update(kps)
+            transforms[frame_idx] = speed_t
+            radar_transforms[frame_idx] = radar_t
+    finally:
+        cap.release()
+
+    return MetricContext(
+        transforms=transforms,
+        radar_transforms=radar_transforms,
+        keypoints=keypoints_by_frame,
+    )
