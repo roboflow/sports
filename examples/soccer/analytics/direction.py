@@ -19,10 +19,12 @@ from analytics.support import (
     JoystickDotSmoother,
     KalmanVelocitySmoother,
     attach_kalman_velocity,
+    build_trackable_detections,
     create_player_detector,
     create_player_tracker,
     draw_joystick_dots,
     draw_team_ellipses,
+    drop_blocked_tracker_ids,
     fit_team_classifier,
     get_crops,
     open_video,
@@ -66,11 +68,13 @@ def run_direction(args) -> None:
         det_by_frame=det_by_frame,
     )
 
-    needs_frame = args.tracker in ("botsort", "botsort_nocmc")
+    # CMC needs the frame only for the full BoTSORT tracker; botsort_nocmc / bytetrack
+    # ignore it, so the frame is passed only for "botsort".
+    needs_frame = args.tracker == "botsort"
 
     # Clip-level team-id majority lock (DIRECTION has no homography, so no GK goal lock).
     print("Building team-id stabilization lock…")
-    team_lock, _, _ = compute_clip_locks(
+    team_lock, _, _, blocked_ids = compute_clip_locks(
         args.source_video_path,
         team_classifier=team_classifier,
         tracker=create_player_tracker(fps, kind=args.tracker),
@@ -100,16 +104,13 @@ def run_direction(args) -> None:
             if raw_dets is None:
                 raw_dets = sv.Detections.empty()
 
-            # ── track ──────────────────────────────────────────────────────
-            players = raw_dets[raw_dets.class_id == PLAYER_CLASS_ID]
-            gks = raw_dets[raw_dets.class_id == GOALKEEPER_CLASS_ID]
-            refs = raw_dets[raw_dets.class_id == REFEREE_CLASS_ID]
-
-            trackable = sv.Detections.merge([players, gks]) if (len(players) or len(gks)) else sv.Detections.empty()
+            # ── track (referees excluded; one goalkeeper per team) ──────────
+            trackable = build_trackable_detections(raw_dets, frame_width=float(width))
             tracked = (
                 tracker.update(trackable, frame=frame if needs_frame else None)
                 if len(trackable) else sv.Detections.empty()
             )
+            tracked = drop_blocked_tracker_ids(tracked, blocked_ids)
 
             # ── team classification ────────────────────────────────────────
             # DIRECTION has no pitch homography by design, so the goal-distance GK

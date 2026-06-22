@@ -24,9 +24,13 @@ from analytics.support import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
     TEAM_NONE,
+    build_trackable_detections,
+    collect_referee_tracker_ids,
+    combine_for_referee_check,
     feet_xy,
     get_crops,
     player_mask,
+    split_detection_roles,
 )
 
 # Goal-side team ids (match the sports pitch template orientation).
@@ -350,13 +354,19 @@ def collect_team_frames(
     needs_frame: bool,
     max_frames: int | None = None,
     detections_by_frame: dict[int, sv.Detections] | None = None,
-) -> list[tuple[int, sv.Detections]]:
-    """One detect→track→classify pass over the clip → ``[(frame_idx, detections)]``.
+) -> tuple[list[tuple[int, sv.Detections]], list[tuple[int, sv.Detections]]]:
+    """One detect→track→classify pass over the clip.
 
-    Outfield players are team-classified; goalkeepers stay TEAM_NONE here (they are
-    resolved later by the goal-distance / centroid logic). ``tracker`` must be a fresh
-    tracker of the same kind used in the render pass so tracker ids align (the existing
-    two-pass distance/focus code relies on this same determinism). When
+    Returns ``(team_frames, referee_frames)``:
+      - ``team_frames``: ``[(frame_idx, detections)]`` of tracked players + goalkeepers
+        with outfield players team-classified; goalkeepers stay TEAM_NONE here (resolved
+        later by the goal-distance / centroid logic).
+      - ``referee_frames``: ``[(frame_idx, detections)]`` stacking the tracked rows with
+        the raw referee rows, used to flag player tracklets that coincide with a referee.
+
+    The trackable set is built via :func:`build_trackable_detections` (the same builder
+    the render passes use) so referees are excluded and tracker ids align across passes.
+    ``tracker`` must be a fresh tracker of the same kind used in the render pass. When
     ``detections_by_frame`` is supplied the raw detections come from it (cache) instead
     of the detector.
     """
@@ -367,6 +377,7 @@ def collect_team_frames(
         raise FileNotFoundError(f"Cannot open video: {source_video_path}")
 
     frames: list[tuple[int, sv.Detections]] = []
+    referee_frames: list[tuple[int, sv.Detections]] = []
     frame_idx = 0
     try:
         while True:
@@ -382,13 +393,8 @@ def collect_team_frames(
                     raw = sv.Detections.empty()
             else:
                 raw = player_detector_fn(frame)
-            players = raw[raw.class_id == PLAYER_CLASS_ID]
-            gks = raw[raw.class_id == GOALKEEPER_CLASS_ID]
-            trackable = (
-                sv.Detections.merge([players, gks])
-                if (len(players) or len(gks))
-                else sv.Detections.empty()
-            )
+            trackable = build_trackable_detections(raw, frame_width=float(frame.shape[1]))
+            _, _, refs = split_detection_roles(raw)
             tracked = (
                 tracker.update(trackable, frame=frame if needs_frame else None)
                 if len(trackable)
@@ -409,9 +415,10 @@ def collect_team_frames(
                 data={"team": team_arr},
             )
             frames.append((frame_idx, dets))
+            referee_frames.append((frame_idx, combine_for_referee_check(tracked, refs)))
     finally:
         cap.release()
-    return frames
+    return frames, referee_frames
 
 
 def compute_clip_locks(
@@ -426,18 +433,20 @@ def compute_clip_locks(
     pitch_confidence: float = 0.9,
     max_frames: int | None = None,
     detections_by_frame: dict[int, sv.Detections] | None = None,
-) -> tuple[dict[int, int], dict[int, int], tuple[int, int] | None]:
+) -> tuple[dict[int, int], dict[int, int], tuple[int, int] | None, frozenset[int]]:
     """Clip-level stabilization from a single detect→track→classify pass.
 
-    Returns ``(team_lock, gk_lock, locked_goal_defenders)``:
+    Returns ``(team_lock, gk_lock, locked_goal_defenders, blocked_referee_ids)``:
       - ``team_lock``: majority-vote team per outfield tracklet (always computed).
       - ``gk_lock``: stabilized team per goalkeeper tracklet (goal-distance mode only).
       - ``locked_goal_defenders``: ``(left_team, right_team)`` for radar goal shading
         (goal-distance mode only, else ``None``).
+      - ``blocked_referee_ids``: tracker ids that ever coincide with a referee box and
+        must be dropped from tracking, kinematics and annotation in every render pass.
     """
     from analytics.teams import lock_teams_by_tracklet_majority
 
-    frames = collect_team_frames(
+    frames, referee_frames = collect_team_frames(
         source_video_path,
         player_detector_fn=player_detector_fn,
         team_classifier=team_classifier,
@@ -446,6 +455,7 @@ def compute_clip_locks(
         max_frames=max_frames,
         detections_by_frame=detections_by_frame,
     )
+    blocked_referee_ids = collect_referee_tracker_ids(referee_frames)
 
     # Resolve goalkeeper-row teams on the collected frames BEFORE the majority vote so
     # that frames detected as a goalkeeper also contribute a team vote for their track.
@@ -480,7 +490,7 @@ def compute_clip_locks(
         if tid in team_lock:
             gk_lock[tid] = team_lock[tid]
 
-    return team_lock, gk_lock, locked_goal_defenders
+    return team_lock, gk_lock, locked_goal_defenders, blocked_referee_ids
 
 
 def _fill_goalkeeper_teams_centroid(frames: list[tuple[int, sv.Detections]]) -> None:

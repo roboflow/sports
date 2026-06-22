@@ -34,12 +34,14 @@ from analytics.support import (
     KalmanSpeedDisplaySmoother,
     KalmanVelocitySmoother,
     JoystickDotSmoother,
+    build_trackable_detections,
     collect_tracks,
     compute_kinematics,
     create_player_detector,
     create_pitch_keypoint_detector,
     create_player_tracker,
     cumulative_distance_at_frame,
+    drop_blocked_tracker_ids,
     feet_xy,
     fit_team_classifier,
     get_crops,
@@ -148,9 +150,11 @@ def run_distance(args) -> None:
     radar_h_by_frame = build_radar_homography_map(metric, confidence=0.9)
 
     gk_assignment = getattr(args, "gk_assignment", "goal_distance")
-    needs_frame = args.tracker in ("botsort", "botsort_nocmc")
+    # CMC needs the frame only for the full BoTSORT tracker; botsort_nocmc / bytetrack
+    # ignore it, so the frame is passed only for "botsort".
+    needs_frame = args.tracker == "botsort"
     print("Building clip locks (team-id + goalkeeper)…")
-    team_lock, gk_lock, locked_goal_defenders = compute_clip_locks(
+    team_lock, gk_lock, locked_goal_defenders, blocked_ids = compute_clip_locks(
         args.source_video_path,
         team_classifier=team_classifier,
         tracker=create_player_tracker(fps, kind=args.tracker),
@@ -178,13 +182,12 @@ def run_distance(args) -> None:
             raw = det_by_frame.get(frame_idx)
             if raw is None:
                 raw = sv.Detections.empty()
-            players = raw[raw.class_id == PLAYER_CLASS_ID]
-            gks = raw[raw.class_id == GOALKEEPER_CLASS_ID]
-            trackable = sv.Detections.merge([players, gks]) if (len(players) or len(gks)) else sv.Detections.empty()
+            trackable = build_trackable_detections(raw, frame_width=float(width))
             tracked = (
                 tracker_pass1.update(trackable, frame=frame if needs_frame else None)
                 if len(trackable) else sv.Detections.empty()
             )
+            tracked = drop_blocked_tracker_ids(tracked, blocked_ids)
             yield frame_idx, tracked
 
     raw_tracks = collect_tracks(_iter_detections())
@@ -219,13 +222,12 @@ def run_distance(args) -> None:
             raw = det_by_frame.get(frame_idx)
             if raw is None:
                 raw = sv.Detections.empty()
-            players = raw[raw.class_id == PLAYER_CLASS_ID]
-            gks = raw[raw.class_id == GOALKEEPER_CLASS_ID]
-            trackable = sv.Detections.merge([players, gks]) if (len(players) or len(gks)) else sv.Detections.empty()
+            trackable = build_trackable_detections(raw, frame_width=float(width))
             tracked = (
                 tracker_pass2.update(trackable, frame=frame if needs_frame else None)
                 if len(trackable) else sv.Detections.empty()
             )
+            tracked = drop_blocked_tracker_ids(tracked, blocked_ids)
 
             team_arr = np.full(len(tracked), TEAM_NONE, dtype=int)
             if len(tracked):

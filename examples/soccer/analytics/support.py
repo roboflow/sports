@@ -35,6 +35,17 @@ DEFAULT_HIGH_CONF_DET_THRESHOLD = 0.6
 DEFAULT_MINIMUM_IOU_THRESHOLD_FIRST_ASSOC = 0.15
 DEFAULT_MIN_SPEED_PX = 0.5
 
+# ── referee / goalkeeper hygiene (box-overlap IoU thresholds) ──────────────────
+# Referees must never reach the player set used for tracking, kinematics or
+# annotation, or they would pick up a track id, an ellipse and a speed/distance
+# readout and inflate the distance numbers. An outfield player box overlapping a
+# referee box is treated as the same person detected under two classes and dropped;
+# a tracklet that ever sits this close to a referee box across the clip is flagged
+# and excluded entirely.
+REFEREE_PLAYER_IOU_THRESHOLD = 0.25
+REFEREE_TRACK_IOU_THRESHOLD = 0.4
+GOALKEEPER_PLAYER_IOU_THRESHOLD = 0.25
+
 # ── team classification ────────────────────────────────────────────────────────
 STRIDE = 60  # frames between team-fit samples (matches existing main.py)
 
@@ -113,21 +124,267 @@ def resolve_goalkeepers_team_id(
 
 
 # ---------------------------------------------------------------------------
+# Referee / goalkeeper hygiene
+# ---------------------------------------------------------------------------
+
+def split_detection_roles(
+    dets: sv.Detections,
+) -> tuple[sv.Detections, sv.Detections, sv.Detections]:
+    """Split detections into (players, goalkeepers, referees) by class id."""
+    return (
+        dets[dets.class_id == PLAYER_CLASS_ID],
+        dets[dets.class_id == GOALKEEPER_CLASS_ID],
+        dets[dets.class_id == REFEREE_CLASS_ID],
+    )
+
+
+def _detection_overlap_with_referees(
+    subject: sv.Detections,
+    referees: sv.Detections,
+    *,
+    iou_threshold: float = REFEREE_PLAYER_IOU_THRESHOLD,
+) -> np.ndarray:
+    """Per-row mask: subject box overlaps a referee box, or holds a referee centre."""
+    if len(subject) == 0 or len(referees) == 0:
+        return np.zeros(len(subject), dtype=bool)
+    ious = sv.box_iou_batch(subject.xyxy, referees.xyxy)
+    overlap = ious.max(axis=1) >= iou_threshold
+    if overlap.all():
+        return overlap
+    # A referee whose centre sits inside the player box but with low IoU (very different
+    # box sizes) is still the same person, so fold those in too.
+    rcx = (referees.xyxy[:, 0] + referees.xyxy[:, 2]) / 2.0
+    rcy = (referees.xyxy[:, 1] + referees.xyxy[:, 3]) / 2.0
+    x1, y1, x2, y2 = (
+        subject.xyxy[:, 0], subject.xyxy[:, 1], subject.xyxy[:, 2], subject.xyxy[:, 3]
+    )
+    for i in np.flatnonzero(~overlap):
+        inside = (rcx >= x1[i]) & (rcx <= x2[i]) & (rcy >= y1[i]) & (rcy <= y2[i])
+        if inside.any():
+            overlap[i] = True
+    return overlap
+
+
+def suppress_players_overlapping_referees(
+    players: sv.Detections,
+    referees: sv.Detections,
+    *,
+    iou_threshold: float = REFEREE_PLAYER_IOU_THRESHOLD,
+) -> sv.Detections:
+    """Drop outfield player rows that duplicate a referee detection (one person, two classes)."""
+    if len(players) == 0 or len(referees) == 0:
+        return players
+    drop = _detection_overlap_with_referees(players, referees, iou_threshold=iou_threshold)
+    return players[~drop]
+
+
+def suppress_goalkeepers_overlapping_players(
+    goalkeepers: sv.Detections,
+    players: sv.Detections,
+    *,
+    iou_threshold: float = GOALKEEPER_PLAYER_IOU_THRESHOLD,
+) -> sv.Detections:
+    """Drop goalkeeper rows that duplicate a nearby outfield player (class flicker)."""
+    if len(goalkeepers) == 0 or len(players) == 0:
+        return goalkeepers
+    ious = sv.box_iou_batch(goalkeepers.xyxy, players.xyxy)
+    drop = ious.max(axis=1) >= iou_threshold
+    return goalkeepers[~drop]
+
+
+def filter_referees_from_detections(
+    dets: sv.Detections,
+    *,
+    blocked_tracker_ids: set[int] | frozenset[int] | None = None,
+    iou_threshold: float = REFEREE_PLAYER_IOU_THRESHOLD,
+) -> sv.Detections:
+    """Remove referee rows, outfield players overlapping a referee, and flagged tracklets."""
+    if len(dets) == 0:
+        return dets
+    ref_mask = dets.class_id == REFEREE_CLASS_ID
+    keep = ~ref_mask
+    out_mask = dets.class_id == PLAYER_CLASS_ID
+    refs = dets[ref_mask]
+    if len(refs) and out_mask.any():
+        overlap = _detection_overlap_with_referees(
+            dets[out_mask], refs, iou_threshold=iou_threshold
+        )
+        out_idx = np.flatnonzero(out_mask)
+        keep[out_idx[overlap]] = False
+    if blocked_tracker_ids and dets.tracker_id is not None:
+        for i, tid in enumerate(dets.tracker_id):
+            if int(tid) in blocked_tracker_ids:
+                keep[i] = False
+    return dets[keep]
+
+
+def collect_referee_tracker_ids(
+    frames,
+    *,
+    iou_threshold: float = REFEREE_TRACK_IOU_THRESHOLD,
+) -> frozenset[int]:
+    """Clip-level set of tracker ids that ever strongly overlap a referee box.
+
+    ``frames`` yields ``(frame_idx, detections)`` where each detections row carries the
+    tracked outfield players (with ids) alongside the raw referee rows. A player tracklet
+    that lands on a referee box on any frame is a misclassified referee and is flagged so
+    every later pass can exclude it from tracking, kinematics and annotation.
+    """
+    flagged: set[int] = set()
+    for _, dets in frames:
+        if dets.tracker_id is None:
+            continue
+        out_mask = dets.class_id == PLAYER_CLASS_ID
+        ref_mask = dets.class_id == REFEREE_CLASS_ID
+        if not out_mask.any() or not ref_mask.any():
+            continue
+        ious = sv.box_iou_batch(dets.xyxy[out_mask], dets.xyxy[ref_mask])
+        out_idx = np.flatnonzero(out_mask)
+        tids = dets.tracker_id[out_idx]
+        for j, mx in enumerate(ious.max(axis=1)):
+            if float(mx) >= iou_threshold and int(tids[j]) >= 0:
+                flagged.add(int(tids[j]))
+    return frozenset(flagged)
+
+
+def enforce_one_goalkeeper_per_team(
+    dets: sv.Detections,
+    *,
+    frame_width: float | None = None,
+) -> sv.Detections:
+    """Keep at most one goalkeeper per team; drop lower-confidence duplicate GK rows.
+
+    Goalkeepers are bucketed by team id when known, else by which broadcast half the
+    box centre falls in, and only the highest-confidence (then tallest) keeper survives
+    in each bucket. Applied per frame before tracking so a flickered second keeper
+    cannot spawn a spurious track.
+    """
+    if len(dets) == 0:
+        return dets
+    gk_indices = [
+        i for i in range(len(dets)) if int(dets.class_id[i]) == GOALKEEPER_CLASS_ID
+    ]
+    if len(gk_indices) <= 1:
+        return dets
+    teams = dets.data.get("team") if dets.data else None
+
+    def _group_key(i: int) -> int:
+        team = int(teams[i]) if teams is not None else TEAM_NONE
+        if team in (0, 1):
+            return team
+        cx = float((dets.xyxy[i, 0] + dets.xyxy[i, 2]) * 0.5)
+        mid = (frame_width * 0.5) if frame_width and frame_width > 0 else 960.0
+        return 0 if cx < mid else 1
+
+    def _rank(i: int) -> tuple[float, float]:
+        conf = float(dets.confidence[i]) if dets.confidence is not None else 0.0
+        height = float(dets.xyxy[i, 3] - dets.xyxy[i, 1])
+        return (conf, height)
+
+    by_group: dict[int, list[int]] = {}
+    for i in gk_indices:
+        by_group.setdefault(_group_key(i), []).append(i)
+    drop = np.zeros(len(dets), dtype=bool)
+    for group_indices in by_group.values():
+        if len(group_indices) <= 1:
+            continue
+        best = max(group_indices, key=_rank)
+        for i in group_indices:
+            if i != best:
+                drop[i] = True
+    return dets[~drop]
+
+
+def build_trackable_detections(
+    raw: sv.Detections | None,
+    *,
+    frame_width: float | None = None,
+) -> sv.Detections:
+    """Players + goalkeepers to feed the tracker, with referees and duplicate keepers removed.
+
+    Single source of truth for the trackable set so the clip-level lock pass and every
+    render pass hand the tracker identical input — that keeps tracker ids aligned across
+    passes (the existing two-pass distance / focus code depends on this). Enforces one
+    goalkeeper per team, drops referee rows and outfield players that flicker onto a
+    referee, and removes goalkeepers duplicating a nearby player.
+    """
+    if raw is None or len(raw) == 0:
+        return sv.Detections.empty()
+    cleaned = enforce_one_goalkeeper_per_team(raw, frame_width=frame_width)
+    cleaned = filter_referees_from_detections(cleaned)
+    players, gks, _ = split_detection_roles(cleaned)
+    gks = suppress_goalkeepers_overlapping_players(gks, players)
+    if len(players) or len(gks):
+        return sv.Detections.merge([players, gks])
+    return sv.Detections.empty()
+
+
+def combine_for_referee_check(
+    tracked: sv.Detections,
+    referees: sv.Detections,
+) -> sv.Detections:
+    """Stack tracked player/gk rows (with ids) and referee rows (id -1) for ref detection.
+
+    The result carries only ``xyxy`` / ``class_id`` / ``tracker_id`` — enough for
+    :func:`collect_referee_tracker_ids` to flag player tracklets that land on a referee.
+    """
+    if len(tracked) and len(referees):
+        tids = (
+            tracked.tracker_id
+            if tracked.tracker_id is not None
+            else np.full(len(tracked), -1)
+        )
+        return sv.Detections(
+            xyxy=np.concatenate([tracked.xyxy, referees.xyxy], axis=0).astype(np.float32),
+            class_id=np.concatenate([tracked.class_id, referees.class_id]).astype(int),
+            tracker_id=np.concatenate(
+                [tids, np.full(len(referees), -1, dtype=int)]
+            ).astype(int),
+        )
+    return tracked if len(tracked) else referees
+
+
+def drop_blocked_tracker_ids(
+    dets: sv.Detections,
+    blocked_tracker_ids: set[int] | frozenset[int] | None,
+) -> sv.Detections:
+    """Remove tracked rows whose tracker id was flagged as a referee tracklet."""
+    if (
+        not blocked_tracker_ids
+        or dets is None
+        or len(dets) == 0
+        or dets.tracker_id is None
+    ):
+        return dets
+    keep = np.array(
+        [int(t) not in blocked_tracker_ids for t in dets.tracker_id], dtype=bool
+    )
+    if keep.all():
+        return dets
+    return dets[keep]
+
+
+# ---------------------------------------------------------------------------
 # Kalman velocity helpers
 # ---------------------------------------------------------------------------
 
 def _kalman_feet_velocity_from_tracklet(tracklet) -> np.ndarray | None:
-    """Extract feet-referenced Kalman velocity from a tracker tracklet."""
+    """Extract feet-referenced Kalman velocity from a tracker tracklet.
+
+    Reads the bottom-edge velocity straight from the Kalman state vector, which only
+    carries the velocity components once the filter has built an 8-element state
+    (position + velocity per coordinate); shorter states have no usable velocity yet.
+    """
     est = tracklet.state_estimator
     x = est.kf.x.flatten()
-    if len(x) < 6:
+    if len(x) < 7:
         return None
     if isinstance(est, XYXYStateEstimator):
-        vx = (float(x[4]) + float(x[6])) / 2.0 if len(x) > 6 else float(x[4])
-        vy = float(x[7]) if len(x) > 7 else float(x[5])
+        vx = (float(x[4]) + float(x[6])) / 2.0
+        vy = float(x[7])
     elif isinstance(est, XCYCWHStateEstimator):
         vx = float(x[4])
-        vy = float(x[5]) + float(x[7]) / 2.0 if len(x) > 7 else float(x[5])
+        vy = float(x[5]) + float(x[7]) / 2.0
     else:
         vx, vy = float(x[4]), float(x[5])
     return np.array([vx, vy], dtype=np.float64)
