@@ -1,7 +1,12 @@
-"""analytics/distance.py — Feature 3: cumulative distance + leaderboard end-card.
+"""analytics/distance.py — Feature 3: cumulative distance, focus-all look + end-card.
 
-Two-pass: collect_tracks → compute_kinematics(mode="homography", gated H) →
-per-frame cumulative-meters labels + end-card distance ranking.
+Two-pass: collect_tracks → compute_kinematics(mode="homography", gated H). The per-frame
+render reuses the shared PLAYER_FOCUS follow-all look (all players annotated with instant
+speed + cumulative-distance chips, plus a translucent trace radar). DISTANCE stays distinct
+from PLAYER_FOCUS follow-all by appending its distance leaderboard end-card.
+
+Speed source:    Kalman ground speed + speed_transforms_gap_filled (instant chips).
+Distance source: compute_kinematics(mode="homography", gated speed_transforms).
 """
 
 from __future__ import annotations
@@ -16,24 +21,32 @@ from analytics.cache import (
     build_or_load_keypoints,
 )
 from analytics.goalkeepers import apply_goalkeeper_frame, compute_clip_locks
-from analytics.homography import MetricContext, build_metric_from_maps
+from analytics.homography import (
+    MetricContext,
+    build_metric_from_maps,
+    build_radar_homography_map,
+    valid_pitch_cm,
+)
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
     TEAM_NONE,
+    KalmanSpeedDisplaySmoother,
     KalmanVelocitySmoother,
-    attach_kalman_velocity,
+    JoystickDotSmoother,
     collect_tracks,
     compute_kinematics,
     create_player_detector,
     create_pitch_keypoint_detector,
     create_player_tracker,
     cumulative_distance_at_frame,
-    draw_distance_labels,
-    draw_team_ellipses,
+    feet_xy,
     fit_team_classifier,
     get_crops,
+    kalman_ground_speed_m_s,
+    kalman_velocity_arrays,
     open_video,
+    render_follow_all_frame,
     resolve_goalkeepers_team_id,
 )
 from analytics.teams import apply_team_lock, relock_detection_teams
@@ -79,7 +92,7 @@ def _build_end_card(
 
 
 def run_distance(args) -> None:
-    """Two-pass: collect detections → kinematics → render cumulative distance + end-card."""
+    """Two-pass: collect detections → kinematics → render follow-all look + end-card."""
     cap, fps, width, height = open_video(args.source_video_path)
 
     player_model_id = getattr(args, "player_model_id", "football-players-detection-3zvbc/11")
@@ -129,6 +142,10 @@ def run_distance(args) -> None:
         kp_by_frame, detections_by_frame=det_by_frame, pitch_confidence=0.9
     )
     speed_transforms = metric.speed_transforms
+    gap_filled = metric.speed_transforms_gap_filled(0.9)
+    # Single source of truth for the minimap (traces AND live dots): the gated,
+    # orientation-locked radar H, with an orientation-locked keypoint H fallback.
+    radar_h_by_frame = build_radar_homography_map(metric, confidence=0.9)
 
     gk_assignment = getattr(args, "gk_assignment", "goal_distance")
     needs_frame = args.tracker in ("botsort", "botsort_nocmc")
@@ -182,6 +199,11 @@ def run_distance(args) -> None:
     print("Second pass: rendering…")
     tracker_pass2 = create_player_tracker(fps, kind=args.tracker)
     vel_smoother = KalmanVelocitySmoother(alpha=0.3)
+    speed_smoother = KalmanSpeedDisplaySmoother(alpha=0.3)
+    joy_smoother = JoystickDotSmoother(alpha=0.32)
+
+    # per-tid growing trace in pitch-cm coordinates (radar polylines)
+    trace_by_tid: dict[int, list[np.ndarray]] = {}
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     with sv.VideoSink(args.target_video_path, sv.VideoInfo(width, height, fps)) as sink:
@@ -234,12 +256,60 @@ def run_distance(args) -> None:
                 tracked = apply_goalkeeper_frame(
                     tracked, metric.radar_transforms.get(frame_idx), gk_lock
                 )
-            dets = attach_kalman_velocity(tracked, tracker_pass2, needs_frame=needs_frame, image=frame)
+            # Read Kalman velocity from the tracker already advanced above; a second
+            # tracker.update() here would inflate/fragment ids and break cross-pass
+            # distance attribution.
+            kf_vx, kf_vy = kalman_velocity_arrays(tracked, tracker_pass2)
+            data = dict(tracked.data) if tracked.data else {}
+            data["kf_vx"] = kf_vx
+            data["kf_vy"] = kf_vy
+            dets = sv.Detections(
+                xyxy=tracked.xyxy,
+                class_id=tracked.class_id,
+                tracker_id=tracked.tracker_id,
+                confidence=tracked.confidence,
+                data=data,
+            )
             dets = vel_smoother.smooth_detections(dets)
             # Clip-level lock has the final say so class-flipping keepers stay one colour.
             dets = relock_detection_teams(dets, team_lock)
 
-            # cumulative distance per tid at this frame
+            # ── update trace buffers (radar H → pitch cm) ──────────────────
+            radar_h = radar_h_by_frame.get(frame_idx)
+            if radar_h is not None and dets.tracker_id is not None:
+                fxy = feet_xy(dets)
+                xy_cm = radar_h.transform_points(fxy.astype(np.float32))
+                for i, tid in enumerate(dets.tracker_id):
+                    tid = int(tid)
+                    if tid < 0:
+                        continue
+                    if not valid_pitch_cm(xy_cm[i:i + 1], margin_cm=80.0)[0]:
+                        continue
+                    trace_by_tid.setdefault(tid, []).append(xy_cm[i].copy())
+
+            # ── Kalman ground speed per player (gap-filled H) ──────────────
+            speed_t = gap_filled.get(frame_idx)
+            speed_by_tid: dict[int, float] = {}
+            if speed_t is not None and dets.tracker_id is not None and dets.data is not None:
+                fxy = feet_xy(dets)
+                kf_vx = dets.data.get("kf_vx")
+                kf_vy = dets.data.get("kf_vy")
+                if kf_vx is not None:
+                    for i, tid in enumerate(dets.tracker_id):
+                        tid = int(tid)
+                        if tid < 0:
+                            continue
+                        vx, vy = float(kf_vx[i]), float(kf_vy[i])
+                        if not (np.isfinite(vx) and np.isfinite(vy)):
+                            continue
+                        s = kalman_ground_speed_m_s(
+                            fxy[i], np.array([vx, vy], dtype=np.float64),
+                            speed_t, fps=fps,
+                        )
+                        if s is not None:
+                            speed_by_tid[tid] = speed_smoother.smooth(tid, float(s))
+
+            # ── cumulative distance per tid at this frame ──────────────────
             dist_by_tid: dict[int, float] = {}
             if dets.tracker_id is not None:
                 for tid in dets.tracker_id:
@@ -251,12 +321,21 @@ def run_distance(args) -> None:
                     if d is not None:
                         dist_by_tid[tid] = d
 
+            # ── render: shared follow-all look (chips + trace radar) ───────
             annotated = frame.copy()
-            draw_team_ellipses(annotated, dets)
-            draw_distance_labels(annotated, dets, dist_by_tid)
+            render_follow_all_frame(
+                annotated, dets,
+                joystick_smoother=joy_smoother,
+                speed_by_tid=speed_by_tid,
+                distance_by_tid=dist_by_tid,
+                trace_by_tid=trace_by_tid,
+                radar_transformer=radar_h_by_frame.get(frame_idx),
+                locked_goal_defenders=locked_goal_defenders,
+                show_legend=True,
+            )
             sink.write_frame(annotated)
 
-        # ── end-card (3 seconds) ───────────────────────────────────────────
+        # ── end-card (3 seconds) — keeps DISTANCE distinct from follow-all ──
         end_card = _build_end_card(width, height, raw_tracks)
         n_end_frames = max(1, int(fps * 3))
         for _ in range(n_end_frames):

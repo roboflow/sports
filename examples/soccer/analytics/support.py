@@ -915,6 +915,139 @@ def draw_trace_on_minimap(
     return radar
 
 
+def build_trace_minimap(
+    detections: sv.Detections,
+    transformer: ViewTransformer | None,
+    trace_by_tid: dict[int, list[np.ndarray]],
+    focus_tid: int | None = None,
+    *,
+    config=None,
+    scale: float = RADAR_MINIMAP_SCALE,
+    padding: int = RADAR_MINIMAP_PAD,
+    locked_goal_defenders: tuple[int, int] | None = None,
+) -> np.ndarray:
+    """Build a radar minimap with per-track colored traces + current player dots.
+
+    Shared by DISTANCE and PLAYER_FOCUS so both render the same radar. With
+    ``focus_tid=None`` (follow-all / DISTANCE) every track keeps its own color; a
+    focus id (PLAYER_FOCUS spotlight) dims the other traces and dots.
+    """
+    from sports.annotators.soccer import draw_pitch
+    from sports.configs.soccer import SoccerPitchConfiguration
+    from analytics.homography import valid_pitch_cm
+
+    if config is None:
+        config = SoccerPitchConfiguration()
+    radar = draw_pitch(config=config, padding=padding, scale=scale)
+    if locked_goal_defenders is not None:
+        left_def, right_def = locked_goal_defenders
+        if left_def in (0, 1) and right_def in (0, 1):
+            radar = draw_goals_on_pitch(
+                config, left_defender_team=left_def, right_defender_team=right_def,
+                team_colors=TEAM_COLORS, padding=padding, scale=scale, pitch=radar,
+            )
+    # draw traces (smoothing + outlier filtering handled in draw_trace_on_minimap)
+    for tid, pts in trace_by_tid.items():
+        if len(pts) < 2:
+            continue
+        trace = np.stack(pts, axis=0)
+        if focus_tid is not None and tid != focus_tid:
+            color = (60, 60, 60)
+        else:
+            color = track_id_color(tid)
+        radar = draw_trace_on_minimap(radar, trace, color, padding=padding, scale=scale)
+
+    # draw current player positions
+    if transformer is not None and len(detections):
+        pmask = player_mask(detections)
+        if pmask.any():
+            pdet = detections[pmask]
+            xy = feet_xy(pdet).astype(np.float32)
+            xy_cm = transformer.transform_points(xy)
+            # Drop off-pitch warps so outlier dots stop rendering on the radar.
+            on_pitch = valid_pitch_cm(xy_cm, config, margin_cm=80.0)
+            tids_p = pdet.tracker_id if pdet.tracker_id is not None else np.full(len(pdet), -1)
+            teams = pdet.data.get("team", np.full(len(pdet), TEAM_NONE)) if pdet.data else np.full(len(pdet), TEAM_NONE)
+            for i in range(len(pdet)):
+                if not on_pitch[i]:
+                    continue
+                t_id = int(tids_p[i])
+                team = int(teams[i])
+                if focus_tid is not None and t_id != focus_tid:
+                    color = (60, 60, 60)
+                elif team in (0, 1):
+                    color = TEAM_COLORS[team].as_bgr()
+                else:
+                    color = track_id_color(t_id) if t_id >= 0 else (150, 150, 150)
+                pt_cm = xy_cm[i]
+                px = int(pt_cm[0] * scale) + padding
+                py = int(pt_cm[1] * scale) + padding
+                cv2.circle(radar, (px, py), 8, color, -1, cv2.LINE_AA)
+                cv2.circle(radar, (px, py), 8, (255, 255, 255), 1, cv2.LINE_AA)
+    return radar
+
+
+def annotate_motion_overlay(
+    frame: np.ndarray,
+    detections: sv.Detections,
+    *,
+    joystick_smoother: JoystickDotSmoother | None,
+    speed_by_tid: dict[int, float] | None,
+    distance_by_tid: dict[int, float] | None,
+    show_ids: bool = False,
+) -> None:
+    """Draw team ellipses + instant-speed badge + cumulative-distance chip per player.
+
+    The instant Kalman ground speed rides the joystick dot (existing speed badge) and
+    the cumulative-distance chip sits above the player, so the two metric chips stack
+    without overlapping. Shared by DISTANCE and PLAYER_FOCUS so the on-player metric
+    chips look identical across both demos.
+    """
+    draw_team_ellipses(frame, detections, show_ids=show_ids)
+    draw_joystick_dots(
+        frame, detections, joystick_smoother,
+        speed_by_tid=speed_by_tid, show_speed=speed_by_tid is not None,
+    )
+    if distance_by_tid is not None:
+        draw_distance_labels(frame, detections, distance_by_tid)
+
+
+def render_follow_all_frame(
+    frame: np.ndarray,
+    detections: sv.Detections,
+    *,
+    joystick_smoother: JoystickDotSmoother | None,
+    speed_by_tid: dict[int, float] | None,
+    distance_by_tid: dict[int, float] | None,
+    trace_by_tid: dict[int, list[np.ndarray]],
+    radar_transformer: ViewTransformer | None,
+    locked_goal_defenders: tuple[int, int] | None = None,
+    focus_tid: int | None = None,
+    show_legend: bool = True,
+    show_ids: bool = False,
+) -> None:
+    """Annotate every player with speed+distance chips and overlay the trace radar.
+
+    This is the shared "follow-all" look: it backs both PLAYER_FOCUS (no --track-id)
+    and DISTANCE so the two render identically apart from DISTANCE's leaderboard
+    end-card. Mutates ``frame`` in place.
+    """
+    annotate_motion_overlay(
+        frame, detections,
+        joystick_smoother=joystick_smoother,
+        speed_by_tid=speed_by_tid,
+        distance_by_tid=distance_by_tid,
+        show_ids=show_ids,
+    )
+    if show_legend:
+        draw_speed_legend(frame)
+    mini_radar = build_trace_minimap(
+        detections, radar_transformer, trace_by_tid, focus_tid,
+        locked_goal_defenders=locked_goal_defenders,
+    )
+    overlay_minimap(frame, mini_radar)
+
+
 # ---------------------------------------------------------------------------
 # Video helpers
 # ---------------------------------------------------------------------------
