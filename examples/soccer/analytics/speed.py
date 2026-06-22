@@ -70,8 +70,12 @@ def run_speed(args) -> None:
         fps=fps,
         max_frames=args.max_frames,
         pitch_confidence=0.9,
+        player_detector_fn=player_detector_fn,
     )
     gap_filled = metric.speed_transforms_gap_filled(0.9)
+    # Single source of truth for the minimap: ungated keypoint-radar H (labelled
+    # correspondences keep it upright), with the gated radar H as a fallback.
+    radar_h_by_frame = metric.keypoint_radar_transforms(0.9)
 
     gk_assignment = getattr(args, "gk_assignment", "goal_distance")
     needs_frame = args.tracker in ("botsort", "botsort_nocmc")
@@ -181,8 +185,8 @@ def run_speed(args) -> None:
             )
             draw_speed_legend(annotated)
 
-            # radar minimap with current-frame gated H (may be None → skipped)
-            radar_t = metric.radar_transforms.get(frame_idx)
+            # radar minimap: ungated keypoint H (upright), gated radar H as fallback
+            radar_t = radar_h_by_frame.get(frame_idx) or metric.radar_transforms.get(frame_idx)
             if radar_t is not None:
                 draw_radar_minimap(
                     annotated, dets, radar_t,

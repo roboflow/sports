@@ -17,7 +17,7 @@ import numpy as np
 import supervision as sv
 
 from analytics.goalkeepers import apply_goalkeeper_frame, compute_clip_locks
-from analytics.homography import MetricContext, ensure_pitch_homography_maps
+from analytics.homography import MetricContext, ensure_pitch_homography_maps, valid_pitch_cm
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
@@ -130,9 +130,13 @@ def _build_trace_minimap(
             pdet = detections[pmask]
             xy = feet_xy(pdet).astype(np.float32)
             xy_cm = transformer.transform_points(xy)
+            # Drop obviously off-pitch warps (a few metres beyond the lines are kept).
+            on_pitch = valid_pitch_cm(xy_cm, config, margin_cm=-300.0)
             tids_p = pdet.tracker_id if pdet.tracker_id is not None else np.full(len(pdet), -1)
             teams = pdet.data.get("team", np.full(len(pdet), TEAM_NONE)) if pdet.data else np.full(len(pdet), TEAM_NONE)
             for i in range(len(pdet)):
+                if not on_pitch[i]:
+                    continue
                 t_id = int(tids_p[i])
                 team = int(teams[i])
                 if focus_tid is not None and t_id != focus_tid:
@@ -181,9 +185,11 @@ def run_player_focus(args) -> None:
         fps=fps,
         max_frames=args.max_frames,
         pitch_confidence=0.9,
+        player_detector_fn=player_detector_fn,
     )
     speed_transforms = metric.speed_transforms
     gap_filled = metric.speed_transforms_gap_filled(0.9)
+    # Single source of truth for the minimap (traces AND live dots): ungated keypoint H.
     radar_h_by_frame = metric.keypoint_radar_transforms(0.9)
 
     gk_assignment = getattr(args, "gk_assignment", "goal_distance")
@@ -352,21 +358,22 @@ def run_player_focus(args) -> None:
                 draw_speed_legend(annotated)
 
             # ── radar minimap with traces ──────────────────────────────────
-            radar_transformer = metric.radar_transforms.get(frame_idx)
-            if radar_transformer is not None or True:
-                mini_radar = _build_trace_minimap(
-                    dets,
-                    radar_transformer,
-                    trace_by_tid,
-                    focus_tid,
-                    locked_goal_defenders=locked_goal_defenders,
-                )
-                rh, rw = mini_radar.shape[:2]
-                fh, fw = annotated.shape[:2]
-                x0 = fw - rw - 12
-                y0 = fh - rh - 12
-                if x0 >= 0 and y0 >= 0:
-                    annotated[y0:y0 + rh, x0:x0 + rw] = mini_radar
+            # Live dots use the SAME keypoint-radar H as the traces (one coordinate
+            # frame), falling back to the gated radar H only when it is unavailable.
+            radar_transformer = radar_h_by_frame.get(frame_idx) or metric.radar_transforms.get(frame_idx)
+            mini_radar = _build_trace_minimap(
+                dets,
+                radar_transformer,
+                trace_by_tid,
+                focus_tid,
+                locked_goal_defenders=locked_goal_defenders,
+            )
+            rh, rw = mini_radar.shape[:2]
+            fh, fw = annotated.shape[:2]
+            x0 = fw - rw - 12
+            y0 = fh - rh - 12
+            if x0 >= 0 and y0 >= 0:
+                annotated[y0:y0 + rh, x0:x0 + rw] = mini_radar
 
             # ── HUD (focus mode only) ──────────────────────────────────────
             if focus_tid is not None:
