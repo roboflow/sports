@@ -483,15 +483,19 @@ def draw_team_ellipses(
         else:
             color = _team_color(team)
         x1, y1, x2, y2 = xyxy
+        # Match sv.EllipseAnnotator geometry: feet-centered open arc whose semi-axes
+        # are the full box width and 0.35x that width (not half), so the ground ellipse
+        # sits under the player at the expected visible size.
+        width = float(x2 - x1)
         cx = int((x1 + x2) / 2)
         cy = int(y2)
-        rx = max(int((x2 - x1) / 2), 1)
-        ry = max(int(rx * 0.35), 1)
+        rx = max(int(width), 1)
+        ry = max(int(0.35 * width), 1)
         cv2.ellipse(
             frame,
             (cx, cy),
             (rx, ry),
-            0, 0, 360,
+            0.0, -45, 235,
             color.as_bgr(),
             thickness,
             cv2.LINE_AA,
