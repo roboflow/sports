@@ -502,22 +502,34 @@ def draw_team_ellipses(
         )
         tid = int(tids[i])
         if show_ids and tid >= 0:
-            cv2.putText(
-                frame, str(tid),
-                (cx - 6, cy - ry - 4),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.4,
-                color.as_bgr(), 1, cv2.LINE_AA,
-            )
+            # Clean id chip (shared badge styling) instead of a raw putText number.
+            _draw_chip(frame, f"#{tid}", (cx, cy - ry - 8), team_bgr=color.as_bgr())
 
 
 # ── radial Kalman speed badge (ported from world_cup_projects/common/visual.py) ──
 _SPEED_BADGE_BG_BGR = (16, 18, 24)
 SPEED_SPRINT_MS = 5.0
 
+# Shared chip styling: speed, distance and id markers all use the same compact
+# translucent box (dark bg, team-colored side rail, thin border, shadowed value)
+# so they read as one family of chips.
+_CHIP_FONT = cv2.FONT_HERSHEY_DUPLEX
+_CHIP_VALUE_SCALE = 0.48
+_CHIP_VALUE_THICK = 1
+_CHIP_PAD_X = 3
+_CHIP_PAD_Y = 2
+_CHIP_RAIL_W = 2
+_CHIP_TEXT_BGR = (240, 242, 248)
+
 
 def _format_speed_value(speed_m_s: float) -> str:
     """Round to 1 decimal m/s — readable without false precision."""
     return f"{round(max(0.0, float(speed_m_s)), 1):.1f}"
+
+
+def _format_distance_value(distance_m: float) -> str:
+    """Whole metres with an explicit unit — e.g. "12 m"."""
+    return f"{max(0, int(round(float(distance_m))))} m"
 
 
 def _draw_text_shadow(
@@ -535,6 +547,49 @@ def _draw_text_shadow(
     font = cv2.FONT_HERSHEY_DUPLEX
     cv2.putText(frame, text, (x + sx, y + sy), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
     cv2.putText(frame, text, (x, y), font, font_scale, color_bgr, thickness, cv2.LINE_AA)
+
+
+def _chip_box_size(text: str) -> tuple[int, int, int, int]:
+    """Pixel footprint of a value chip: (box_w, box_h, value_h, baseline)."""
+    (vw, vh), baseline = cv2.getTextSize(text, _CHIP_FONT, _CHIP_VALUE_SCALE, _CHIP_VALUE_THICK)
+    box_w = vw + _CHIP_PAD_X * 2 + _CHIP_RAIL_W
+    box_h = vh + baseline + _CHIP_PAD_Y * 2
+    return box_w, box_h, vh, baseline
+
+
+def _draw_chip(
+    frame: np.ndarray,
+    text: str,
+    center: tuple[float, float],
+    *,
+    team_bgr: tuple[int, int, int],
+    border_bgr: tuple[int, int, int] | None = None,
+) -> tuple[int, int]:
+    """Draw a compact translucent value chip centered at ``center``.
+
+    Shared by the speed badge, the distance marker and the track-id label so the
+    three share one visual style. Returns the drawn (box_w, box_h).
+    """
+    box_w, box_h, vh, _baseline = _chip_box_size(text)
+    bcx, bcy = center
+    x0 = int(round(bcx - box_w * 0.5))
+    y0 = int(round(bcy - box_h * 0.5))
+    fh, fw = frame.shape[:2]
+    x0 = int(np.clip(x0, 2, max(2, fw - box_w - 2)))
+    y0 = int(np.clip(y0, 2, max(2, fh - box_h - 2)))
+    x1, y1 = x0 + box_w, y0 + box_h
+    if border_bgr is None:
+        border_bgr = tuple(int(c * 0.7) for c in team_bgr)
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), _SPEED_BADGE_BG_BGR, -1)
+    cv2.rectangle(overlay, (x0, y0), (x0 + _CHIP_RAIL_W, y1), team_bgr, -1)
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), border_bgr, 1, cv2.LINE_AA)
+    frame[:] = cv2.addWeighted(overlay, 0.62, frame, 0.38, 0)
+    _draw_text_shadow(
+        frame, text, (x0 + _CHIP_RAIL_W + _CHIP_PAD_X, y0 + _CHIP_PAD_Y + vh),
+        font_scale=_CHIP_VALUE_SCALE, color_bgr=_CHIP_TEXT_BGR, thickness=_CHIP_VALUE_THICK,
+    )
+    return box_w, box_h
 
 
 def _speed_badge_radial(
@@ -563,33 +618,15 @@ def draw_speed_badge(
 ) -> None:
     """Speed chip riding just outside the smoothed joystick dot along the stick ray."""
     value = _format_speed_value(speed_m_s)
-    font = cv2.FONT_HERSHEY_DUPLEX
-    value_scale, value_thick = 0.48, 1
-    (vw, vh), baseline = cv2.getTextSize(value, font, value_scale, value_thick)
-    pad_x, pad_y, rail_w = 3, 2, 2
-    box_w = vw + pad_x * 2 + rail_w
-    box_h = vh + baseline + pad_y * 2
+    _box_w, box_h, _vh, _baseline = _chip_box_size(value)
 
     ux, uy = _speed_badge_radial(cx, cy, float(px), float(py), vx, vy, min_speed_px=min_speed_px)
     outward = float(dot_radius) + 5.0 + box_h * 0.5
     bcx, bcy = float(px) + ux * outward, float(py) + uy * outward
-    x0 = int(round(bcx - box_w * 0.5))
-    y0 = int(round(bcy - box_h * 0.5))
-    fh, fw = frame.shape[:2]
-    x0 = int(np.clip(x0, 2, max(2, fw - box_w - 2)))
-    y0 = int(np.clip(y0, 2, max(2, fh - box_h - 2)))
-    x1, y1 = x0 + box_w, y0 + box_h
 
+    # Sprint speeds get the full team color border; otherwise a dimmed variant.
     border = team_bgr if speed_m_s >= SPEED_SPRINT_MS else tuple(int(c * 0.7) for c in team_bgr)
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (x0, y0), (x1, y1), _SPEED_BADGE_BG_BGR, -1)
-    cv2.rectangle(overlay, (x0, y0), (x0 + rail_w, y1), team_bgr, -1)
-    cv2.rectangle(overlay, (x0, y0), (x1, y1), border, 1, cv2.LINE_AA)
-    frame[:] = cv2.addWeighted(overlay, 0.62, frame, 0.38, 0)
-    _draw_text_shadow(
-        frame, value, (x0 + rail_w + pad_x, y0 + pad_y + vh),
-        font_scale=value_scale, color_bgr=(240, 242, 248), thickness=value_thick,
-    )
+    _draw_chip(frame, value, (bcx, bcy), team_bgr=team_bgr, border_bgr=border)
 
 
 def draw_speed_legend(frame: np.ndarray) -> None:
@@ -678,9 +715,18 @@ def draw_distance_labels(
     detections: sv.Detections,
     distance_by_tid: dict[int, float],
 ) -> None:
-    """Draw cumulative distance label above each tracked player."""
+    """Draw cumulative distance above each tracked player as a styled chip.
+
+    Uses the shared chip styling (see ``_draw_chip``) so the distance marker matches
+    the speed badge, and carries an explicit metre unit (e.g. "12 m"). Used by the
+    DISTANCE and PLAYER_FOCUS features.
+    """
     if len(detections) == 0 or detections.tracker_id is None:
         return
+    teams = (
+        detections.data.get("team", np.full(len(detections), TEAM_NONE))
+        if detections.data else np.full(len(detections), TEAM_NONE)
+    )
     for i, tid in enumerate(detections.tracker_id):
         tid = int(tid)
         if tid < 0:
@@ -690,15 +736,13 @@ def draw_distance_labels(
             continue
         xyxy = detections.xyxy[i]
         x1, y1, x2 = xyxy[0], xyxy[1], xyxy[2]
-        cx = int((x1 + x2) / 2)
-        top = int(y1) - 8
-        label = f"{dist_m:.0f}m"
-        cv2.putText(
-            frame, label,
-            (cx - 10, top),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.4,
-            (100, 255, 100), 1, cv2.LINE_AA,
-        )
+        cx = (float(x1) + float(x2)) / 2.0
+        label = _format_distance_value(dist_m)
+        _, box_h, _vh, _baseline = _chip_box_size(label)
+        cy = float(y1) - 8 - box_h * 0.5
+        team = int(teams[i])
+        team_bgr = _team_color(team).as_bgr()
+        _draw_chip(frame, label, (cx, cy), team_bgr=team_bgr)
 
 
 def track_id_color(tid: int) -> tuple[int, int, int]:
