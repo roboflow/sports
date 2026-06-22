@@ -451,8 +451,9 @@ def draw_team_ellipses(
     detections: sv.Detections,
     *,
     thickness: int = 2,
+    show_ids: bool = True,
 ) -> None:
-    """Draw ground-contact ellipses colored by team."""
+    """Draw ground-contact ellipses colored by team (optional track-id labels)."""
     if len(detections) == 0 or detections.data is None:
         return
     teams = detections.data.get("team", np.full(len(detections), TEAM_NONE))
@@ -479,13 +480,115 @@ def draw_team_ellipses(
             cv2.LINE_AA,
         )
         tid = int(tids[i])
-        if tid >= 0:
+        if show_ids and tid >= 0:
             cv2.putText(
                 frame, str(tid),
                 (cx - 6, cy - ry - 4),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4,
                 color.as_bgr(), 1, cv2.LINE_AA,
             )
+
+
+# ── radial Kalman speed badge (ported from world_cup_projects/common/visual.py) ──
+_SPEED_BADGE_BG_BGR = (16, 18, 24)
+SPEED_SPRINT_MS = 5.0
+
+
+def _format_speed_value(speed_m_s: float) -> str:
+    """Round to 1 decimal m/s — readable without false precision."""
+    return f"{round(max(0.0, float(speed_m_s)), 1):.1f}"
+
+
+def _draw_text_shadow(
+    frame: np.ndarray,
+    text: str,
+    org: tuple[int, int],
+    *,
+    font_scale: float,
+    color_bgr: tuple[int, int, int],
+    thickness: int = 1,
+    shadow_offset: tuple[int, int] = (1, 1),
+) -> None:
+    x, y = org
+    sx, sy = shadow_offset
+    font = cv2.FONT_HERSHEY_DUPLEX
+    cv2.putText(frame, text, (x + sx, y + sy), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+    cv2.putText(frame, text, (x, y), font, font_scale, color_bgr, thickness, cv2.LINE_AA)
+
+
+def _speed_badge_radial(
+    cx: float, cy: float, px: float, py: float, vx: float, vy: float,
+    *, min_speed_px: float = DEFAULT_MIN_SPEED_PX,
+) -> tuple[float, float]:
+    """Outward ray for the badge: stick direction, else Kalman velocity, else up."""
+    dx, dy = float(px - cx), float(py - cy)
+    dist = float(np.hypot(dx, dy))
+    if dist >= 1.0:
+        return dx / dist, dy / dist
+    speed = float(np.hypot(vx, vy))
+    if np.isfinite(vx) and np.isfinite(vy) and speed >= min_speed_px:
+        return vx / speed, vy / speed
+    return 0.0, -1.0
+
+
+def draw_speed_badge(
+    frame: np.ndarray,
+    speed_m_s: float,
+    cx: float, cy: float, px: int, py: int, vx: float, vy: float,
+    *,
+    team_bgr: tuple[int, int, int],
+    dot_radius: int,
+    min_speed_px: float = DEFAULT_MIN_SPEED_PX,
+) -> None:
+    """Speed chip riding just outside the smoothed joystick dot along the stick ray."""
+    value = _format_speed_value(speed_m_s)
+    font = cv2.FONT_HERSHEY_DUPLEX
+    value_scale, value_thick = 0.48, 1
+    (vw, vh), baseline = cv2.getTextSize(value, font, value_scale, value_thick)
+    pad_x, pad_y, rail_w = 3, 2, 2
+    box_w = vw + pad_x * 2 + rail_w
+    box_h = vh + baseline + pad_y * 2
+
+    ux, uy = _speed_badge_radial(cx, cy, float(px), float(py), vx, vy, min_speed_px=min_speed_px)
+    outward = float(dot_radius) + 5.0 + box_h * 0.5
+    bcx, bcy = float(px) + ux * outward, float(py) + uy * outward
+    x0 = int(round(bcx - box_w * 0.5))
+    y0 = int(round(bcy - box_h * 0.5))
+    fh, fw = frame.shape[:2]
+    x0 = int(np.clip(x0, 2, max(2, fw - box_w - 2)))
+    y0 = int(np.clip(y0, 2, max(2, fh - box_h - 2)))
+    x1, y1 = x0 + box_w, y0 + box_h
+
+    border = team_bgr if speed_m_s >= SPEED_SPRINT_MS else tuple(int(c * 0.7) for c in team_bgr)
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), _SPEED_BADGE_BG_BGR, -1)
+    cv2.rectangle(overlay, (x0, y0), (x0 + rail_w, y1), team_bgr, -1)
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), border, 1, cv2.LINE_AA)
+    frame[:] = cv2.addWeighted(overlay, 0.62, frame, 0.38, 0)
+    _draw_text_shadow(
+        frame, value, (x0 + rail_w + pad_x, y0 + pad_y + vh),
+        font_scale=value_scale, color_bgr=(240, 242, 248), thickness=value_thick,
+    )
+
+
+def draw_speed_legend(frame: np.ndarray) -> None:
+    """Global unit key — numbers on players are m/s."""
+    text = "speed  m/s"
+    font = cv2.FONT_HERSHEY_DUPLEX
+    scale, thick = 0.42, 1
+    (tw, th), baseline = cv2.getTextSize(text, font, scale, thick)
+    pad_x, pad_y = 8, 5
+    x0, y1 = 12, frame.shape[0] - 12
+    y0 = y1 - th - baseline - pad_y * 2
+    x1 = x0 + tw + pad_x * 2
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), (16, 18, 24), -1)
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), (70, 72, 82), 1, cv2.LINE_AA)
+    frame[:] = cv2.addWeighted(overlay, 0.62, frame, 0.38, 0)
+    _draw_text_shadow(
+        frame, text, (x0 + pad_x, y1 - pad_y - baseline),
+        font_scale=scale, color_bgr=(220, 222, 230), thickness=thick,
+    )
 
 
 def draw_joystick_dots(
@@ -495,18 +598,32 @@ def draw_joystick_dots(
     *,
     dot_radius: int = 5,
     arm_scale: float = 1.4,
+    speed_by_tid: dict[int, float] | None = None,
+    show_speed: bool = False,
+    min_speed_ms: float = 0.0,
 ) -> None:
-    """Draw directional velocity dot above each player ellipse."""
+    """Draw a team-colored directional velocity dot on each player, optional speed badge.
+
+    The dot color matches the player's team (ported from world_cup
+    ``draw_kalman_joystick_dots``); referees / unassigned rows get no dot. When
+    ``show_speed`` and ``speed_by_tid`` are given, a radial m/s badge rides the dot.
+    """
     if len(detections) == 0 or detections.data is None:
         return
     kf_vx = detections.data.get("kf_vx")
     kf_vy = detections.data.get("kf_vy")
     if kf_vx is None or kf_vy is None:
         return
+    teams = detections.data.get("team", np.full(len(detections), TEAM_NONE))
     tids = detections.tracker_id if detections.tracker_id is not None else np.full(len(detections), -1)
     for i, xyxy in enumerate(detections.xyxy):
-        if int(detections.class_id[i]) == BALL_CLASS_ID:
+        cls = int(detections.class_id[i])
+        if cls in (BALL_CLASS_ID, REFEREE_CLASS_ID):
             continue
+        team = int(teams[i])
+        if team not in (0, 1):
+            continue
+        color = _team_color(team).as_bgr()
         vx, vy = float(kf_vx[i]), float(kf_vy[i])
         if not (np.isfinite(vx) and np.isfinite(vy)):
             continue
@@ -523,36 +640,16 @@ def draw_joystick_dots(
         tid = int(tids[i])
         if joystick_smoother is not None:
             px, py = joystick_smoother.smooth(tid, cx, cy, px, py)
-        cv2.circle(frame, (int(round(px)), int(round(py))), dot_radius, (255, 255, 255), -1, cv2.LINE_AA)
-        cv2.circle(frame, (int(round(px)), int(round(py))), dot_radius, (40, 40, 40), 1, cv2.LINE_AA)
-
-
-def draw_speed_labels(
-    frame: np.ndarray,
-    detections: sv.Detections,
-    speed_by_tid: dict[int, float],
-) -> None:
-    """Draw speed badge (m/s + km/h) above each tracked player."""
-    if len(detections) == 0 or detections.tracker_id is None:
-        return
-    for i, tid in enumerate(detections.tracker_id):
-        tid = int(tid)
-        if tid < 0:
-            continue
-        speed_ms = speed_by_tid.get(tid)
-        if speed_ms is None:
-            continue
-        xyxy = detections.xyxy[i]
-        x1, _, x2, y1 = xyxy[0], xyxy[1], xyxy[2], xyxy[1]
-        cx = int((x1 + x2) / 2)
-        top = int(y1) - 8
-        label = f"{speed_ms:.1f}m/s  {speed_ms * MS_TO_KMH:.1f}k"
-        cv2.putText(
-            frame, label,
-            (cx - 30, top),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.38,
-            (255, 255, 100), 1, cv2.LINE_AA,
-        )
+        ipx, ipy = int(round(px)), int(round(py))
+        cv2.circle(frame, (ipx, ipy), dot_radius, color, -1, cv2.LINE_AA)
+        cv2.circle(frame, (ipx, ipy), dot_radius, (20, 20, 20), 1, cv2.LINE_AA)
+        if show_speed and speed_by_tid is not None and tid >= 0:
+            spd = speed_by_tid.get(tid)
+            if spd is not None and spd >= min_speed_ms:
+                draw_speed_badge(
+                    frame, float(spd), cx, cy, ipx, ipy, vx, vy,
+                    team_bgr=color, dot_radius=dot_radius,
+                )
 
 
 def draw_distance_labels(
@@ -591,6 +688,42 @@ def track_id_color(tid: int) -> tuple[int, int, int]:
     return int(b * 255), int(g * 255), int(r * 255)
 
 
+def draw_goals_on_pitch(
+    config,
+    *,
+    left_defender_team: int,
+    right_defender_team: int,
+    team_colors: list = TEAM_COLORS,
+    padding: int = 50,
+    scale: float = 0.1,
+    pitch: np.ndarray,
+    fill_alpha: float = 0.38,
+) -> np.ndarray:
+    """Highlight each goal mouth in the defending team's color (ported from world_cup)."""
+    w = config.width
+    length = config.length
+    gbw = getattr(config, "goal_box_width", 1832)
+    gbl = getattr(config, "goal_box_length", 550)
+    y0, y1 = (w - gbw) / 2, (w + gbw) / 2
+
+    def _goal_patch(goal_x_cm: float, defender: int, depth_cm: float) -> None:
+        color = team_colors[defender % len(team_colors)].as_bgr()
+        mouth_x = int(goal_x_cm * scale) + padding
+        py0 = int(y0 * scale) + padding
+        py1 = int(y1 * scale) + padding
+        inner_x = int((goal_x_cm + depth_cm) * scale) + padding
+        x_lo, x_hi = sorted((mouth_x, inner_x))
+        overlay = pitch.copy()
+        cv2.rectangle(overlay, (x_lo, py0), (x_hi, py1), color, -1)
+        cv2.addWeighted(overlay, fill_alpha, pitch, 1.0 - fill_alpha, 0, pitch)
+        cv2.line(pitch, (mouth_x, py0), (mouth_x, py1), color, 5, cv2.LINE_AA)
+        cv2.line(pitch, (mouth_x, py0), (mouth_x, py1), (255, 255, 255), 1, cv2.LINE_AA)
+
+    _goal_patch(0.0, left_defender_team, gbl)
+    _goal_patch(float(length), right_defender_team, -gbl)
+    return pitch
+
+
 def draw_radar_minimap(
     frame: np.ndarray,
     detections: sv.Detections,
@@ -600,6 +733,7 @@ def draw_radar_minimap(
     padding: int = 30,
     margin_x: int = 12,
     margin_y: int = 12,
+    locked_goal_defenders: tuple[int, int] | None = None,
 ) -> np.ndarray:
     """Overlay a radar minimap in the bottom-right corner of frame."""
     from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
@@ -613,6 +747,21 @@ def draw_radar_minimap(
     teams = None
     if detections.data is not None:
         teams = detections.data.get("team")
+
+    # ── goal shading by defending team ──────────────────────────────────────
+    pmask_goal = player_mask(detections)
+    left_def, right_def = (locked_goal_defenders or (TEAM_NONE, TEAM_NONE))
+    if locked_goal_defenders is None and pmask_goal.any() and teams is not None:
+        from analytics.goalkeepers import infer_goal_defenders
+        xy_goal = feet_xy(detections[pmask_goal]).astype(np.float32)
+        xy_goal_cm = transformer.transform_points(xy_goal)
+        left_def, right_def = infer_goal_defenders(xy_goal_cm, np.asarray(teams)[pmask_goal])
+    if left_def in (0, 1) and right_def in (0, 1):
+        radar = draw_goals_on_pitch(
+            config, left_defender_team=left_def, right_defender_team=right_def,
+            team_colors=TEAM_COLORS, padding=padding, scale=minimap_scale, pitch=radar,
+        )
+
     pmask = player_mask(detections)
     if pmask.any():
         pdet = detections[pmask]
@@ -688,6 +837,20 @@ def open_video(path: str) -> tuple[cv2.VideoCapture, float, int, int]:
 
 MAX_PHYSICAL_STEP_MS = 12.5   # ~45 km/h hard cap on a single-frame step
 HOMOGRAPHY_PITCH_SMOOTH = 5   # median window on pitch trajectory before distance integration
+HOMOGRAPHY_XY_SMOOTH = 5      # moving-average window on image feet before warping to pitch
+
+
+def _smooth_xy(xy: np.ndarray, window: int) -> np.ndarray:
+    """Moving-average smooth an (N, 2) trajectory (ported from world_cup speed_distance)."""
+    if len(xy) < 2 or window <= 1:
+        return xy
+    pad = window // 2
+    out = xy.copy()
+    for k in range(2):
+        col = xy[:, k]
+        padded = np.pad(col, pad, mode="edge")
+        out[:, k] = np.array([np.mean(padded[i:i + window]) for i in range(len(col))])
+    return out
 
 
 from dataclasses import dataclass as _dataclass, field as _field
@@ -810,6 +973,8 @@ def compute_kinematics(
         transforms = frame_transforms or {}
 
         if mode == "homography" and transforms:
+            # Pre-smooth image feet (moving average) before warping to pitch space.
+            xy = _smooth_xy(xy, HOMOGRAPHY_XY_SMOOTH)
             pos = _pitch_positions(xy, frames, transforms)
             dist_m, step_m = _distance_from_smoothed(pos, frames, fps)
             track.distance_m = dist_m
