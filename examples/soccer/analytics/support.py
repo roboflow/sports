@@ -1444,7 +1444,7 @@ def compute_kinematics(
     *,
     mode: str = "homography",
     frame_transforms: dict[int, Any] | None = None,
-    min_frames: int = 10,
+    min_frames: int = 2,
 ) -> dict[int, PlayerTrack]:
     """Compute cumulative distance for each track.
 

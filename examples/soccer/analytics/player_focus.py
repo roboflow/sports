@@ -180,6 +180,7 @@ def run_player_focus(args) -> None:
         fps,
         mode="homography",
         frame_transforms=speed_transforms,
+        min_frames=2,
     )
 
     # ── Second pass: render ────────────────────────────────────────────────
