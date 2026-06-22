@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from analytics.goalkeepers import apply_goalkeeper_frame, compute_goalkeeper_lock
+from analytics.goalkeepers import apply_goalkeeper_frame, compute_clip_locks
 from analytics.homography import MetricContext, ensure_pitch_homography_maps
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
@@ -24,7 +24,7 @@ from analytics.support import (
     create_player_detector,
     create_pitch_keypoint_detector,
     create_player_tracker,
-    draw_speed_labels,
+    draw_speed_legend,
     draw_team_ellipses,
     draw_joystick_dots,
     draw_radar_minimap,
@@ -36,6 +36,7 @@ from analytics.support import (
     resolve_goalkeepers_team_id,
     MS_TO_KMH,
 )
+from analytics.teams import apply_team_lock
 
 
 def run_speed(args) -> None:
@@ -74,18 +75,17 @@ def run_speed(args) -> None:
 
     gk_assignment = getattr(args, "gk_assignment", "goal_distance")
     needs_frame = args.tracker in ("botsort", "botsort_nocmc")
-    gk_lock: dict[int, int] = {}
-    if gk_assignment == "goal_distance":
-        print("Building goalkeeper team lock (goal-distance)…")
-        gk_lock = compute_goalkeeper_lock(
-            args.source_video_path,
-            player_detector_fn=player_detector_fn,
-            team_classifier=team_classifier,
-            tracker=create_player_tracker(fps, kind=args.tracker),
-            needs_frame=needs_frame,
-            metric=metric,
-            max_frames=args.max_frames,
-        )
+    print("Building clip locks (team-id + goalkeeper)…")
+    team_lock, gk_lock, locked_goal_defenders = compute_clip_locks(
+        args.source_video_path,
+        player_detector_fn=player_detector_fn,
+        team_classifier=team_classifier,
+        tracker=create_player_tracker(fps, kind=args.tracker),
+        needs_frame=needs_frame,
+        gk_assignment=gk_assignment,
+        metric=metric,
+        max_frames=args.max_frames,
+    )
 
     tracker = create_player_tracker(fps, kind=args.tracker)
     vel_smoother = KalmanVelocitySmoother(alpha=0.3)
@@ -120,6 +120,7 @@ def run_speed(args) -> None:
                 if len(t_players):
                     pl_teams = team_classifier.predict(get_crops(frame, t_players))
                     team_arr[tracked.class_id == PLAYER_CLASS_ID] = pl_teams
+                team_arr = apply_team_lock(team_arr, tracked.class_id, tracked.tracker_id, team_lock)
                 if gk_assignment == "centroid":
                     t_gks = tracked[tracked.class_id == GOALKEEPER_CLASS_ID]
                     if len(t_gks) and (team_arr == 0).any() and (team_arr == 1).any():
@@ -174,13 +175,19 @@ def run_speed(args) -> None:
             # ── render ─────────────────────────────────────────────────────
             annotated = frame.copy()
             draw_team_ellipses(annotated, dets)
-            draw_joystick_dots(annotated, dets, joy_smoother)
-            draw_speed_labels(annotated, dets, speed_by_tid)
+            draw_joystick_dots(
+                annotated, dets, joy_smoother,
+                speed_by_tid=speed_by_tid, show_speed=True,
+            )
+            draw_speed_legend(annotated)
 
             # radar minimap with current-frame gated H (may be None → skipped)
             radar_t = metric.radar_transforms.get(frame_idx)
             if radar_t is not None:
-                draw_radar_minimap(annotated, dets, radar_t)
+                draw_radar_minimap(
+                    annotated, dets, radar_t,
+                    locked_goal_defenders=locked_goal_defenders,
+                )
 
             sink.write_frame(annotated)
 

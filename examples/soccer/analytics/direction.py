@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import supervision as sv
 
+from analytics.goalkeepers import compute_clip_locks
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
@@ -26,6 +27,7 @@ from analytics.support import (
     open_video,
     resolve_goalkeepers_team_id,
 )
+from analytics.teams import apply_team_lock
 
 
 def run_direction(args) -> None:
@@ -48,8 +50,22 @@ def run_direction(args) -> None:
         max_frames=args.max_frames,
     )
 
-    tracker = create_player_tracker(fps, kind=args.tracker)
     needs_frame = args.tracker in ("botsort", "botsort_nocmc")
+
+    # Clip-level team-id majority lock (DIRECTION has no homography, so no GK goal lock).
+    print("Building team-id stabilization lock…")
+    team_lock, _, _ = compute_clip_locks(
+        args.source_video_path,
+        player_detector_fn=player_detector_fn,
+        team_classifier=team_classifier,
+        tracker=create_player_tracker(fps, kind=args.tracker),
+        needs_frame=needs_frame,
+        gk_assignment="centroid",
+        metric=None,
+        max_frames=args.max_frames,
+    )
+
+    tracker = create_player_tracker(fps, kind=args.tracker)
     vel_smoother = KalmanVelocitySmoother(alpha=0.3)
     joy_smoother = JoystickDotSmoother(alpha=0.32)
 
@@ -88,6 +104,7 @@ def run_direction(args) -> None:
                     player_crops = get_crops(frame, t_players)
                     player_teams = team_classifier.predict(player_crops)
                     team_arr[tracked.class_id == PLAYER_CLASS_ID] = player_teams
+                team_arr = apply_team_lock(team_arr, tracked.class_id, tracked.tracker_id, team_lock)
                 t_gks = tracked[tracked.class_id == GOALKEEPER_CLASS_ID]
                 if len(t_gks) and (team_arr == 0).any() and (team_arr == 1).any():
                     gk_teams = resolve_goalkeepers_team_id(
@@ -114,9 +131,9 @@ def run_direction(args) -> None:
             )
             dets_with_vel = vel_smoother.smooth_detections(dets_with_vel)
 
-            # ── render ─────────────────────────────────────────────────────
+            # ── render (team-colored dots; no track-id numbers in direction) ──
             annotated = frame.copy()
-            draw_team_ellipses(annotated, dets_with_vel)
+            draw_team_ellipses(annotated, dets_with_vel, show_ids=False)
             draw_joystick_dots(annotated, dets_with_vel, joy_smoother)
 
             sink.write_frame(annotated)
