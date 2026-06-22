@@ -865,7 +865,15 @@ def draw_trace_on_minimap(
     scale: float = 0.065,
     thickness: int = 2,
 ) -> np.ndarray:
-    """Draw a pitch-cm polyline trace on a minimap image."""
+    """Draw a pitch-cm polyline trace on a minimap image.
+
+    The trace is median-smoothed over a small window (``HOMOGRAPHY_PITCH_SMOOTH``)
+    before drawing so the radar polyline reads cleanly instead of jittering on raw
+    per-frame homography warps.
+    """
+    trace_cm = _smooth_trajectory(
+        np.asarray(trace_cm, dtype=np.float64), HOMOGRAPHY_PITCH_SMOOTH
+    )
     pts: list[tuple[int, int]] = []
     for pt in trace_cm:
         if np.any(np.isnan(pt)):

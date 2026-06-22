@@ -136,8 +136,8 @@ def _build_trace_minimap(
             pdet = detections[pmask]
             xy = feet_xy(pdet).astype(np.float32)
             xy_cm = transformer.transform_points(xy)
-            # Drop obviously off-pitch warps (a few metres beyond the lines are kept).
-            on_pitch = valid_pitch_cm(xy_cm, config, margin_cm=-300.0)
+            # Drop off-pitch warps so outlier dots stop rendering on the radar.
+            on_pitch = valid_pitch_cm(xy_cm, config, margin_cm=80.0)
             tids_p = pdet.tracker_id if pdet.tracker_id is not None else np.full(len(pdet), -1)
             teams = pdet.data.get("team", np.full(len(pdet), TEAM_NONE)) if pdet.data else np.full(len(pdet), TEAM_NONE)
             for i in range(len(pdet)):
@@ -350,6 +350,10 @@ def run_player_focus(args) -> None:
                 for i, tid in enumerate(dets.tracker_id):
                     tid = int(tid)
                     if tid < 0:
+                        continue
+                    # Drop homography spikes: skip points that warp off the pitch so
+                    # the radar polyline stays free of outlier jumps.
+                    if not valid_pitch_cm(xy_cm[i:i + 1], margin_cm=80.0)[0]:
                         continue
                     trace_by_tid.setdefault(tid, []).append(xy_cm[i].copy())
 
