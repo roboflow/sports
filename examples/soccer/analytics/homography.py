@@ -1,6 +1,5 @@
 """analytics/homography.py — demo-quality pitch homography for player-motion analytics.
 
-Ported from world_cup_projects/common/pitch.py and pipeline.py.
 Imports primitives from the sports library where equivalent; does NOT vendor
 ViewTransformer, draw_pitch, or draw_points_on_pitch.
 """
@@ -33,10 +32,10 @@ PITCH_CONFIG = SoccerPitchConfiguration()
 # ---------------------------------------------------------------------------
 
 class RansacViewTransformer(ViewTransformer):
-    """ViewTransformer with RANSAC reprojection gating (world_cup RANSAC behaviour).
+    """ViewTransformer with RANSAC reprojection gating.
 
     Fits H via the *inverse* path (pitch→image) so the RANSAC threshold is in
-    image pixels, then inverts — matching the world_cup defaults.
+    image pixels, then inverts.
     Subclasses sports.common.view.ViewTransformer so it is a drop-in replacement.
     """
 

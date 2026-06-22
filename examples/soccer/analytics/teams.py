@@ -1,9 +1,8 @@
 """analytics/teams.py — clip-level team-id stabilization for analytics features.
 
-Ported and adapted from world_cup_projects/common/teams.py
-(``lock_teams_by_tracklet_majority``, lines 147-185). Locks one team per
-``tracker_id`` for the whole clip using a majority shirt-colour vote, so brief
-per-frame team-classifier noise cannot flip an outfield player mid-tracklet.
+Locks one team per ``tracker_id`` for the whole clip using a majority shirt-colour
+vote, so brief per-frame team-classifier noise cannot flip an outfield player
+mid-tracklet.
 
 Adapted to this analytics package's role ids (PLAYER_CLASS_ID=2) and to return a
 ``{tracker_id: team}`` lock that render loops apply, rather than mutating cached

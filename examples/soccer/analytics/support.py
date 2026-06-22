@@ -1,6 +1,6 @@
 """analytics/support.py — shared non-homography plumbing for player-motion analytics.
 
-Ported from world_cup_projects (minimal slices; no pass/possession/carrier logic).
+Minimal slices only; no pass/possession/carrier logic.
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ def resolve_goalkeepers_team_id(
 
 
 # ---------------------------------------------------------------------------
-# Kalman velocity helpers  (ported from world_cup_projects/common/tracking_facing.py)
+# Kalman velocity helpers
 # ---------------------------------------------------------------------------
 
 def _kalman_feet_velocity_from_tracklet(tracklet) -> np.ndarray | None:
@@ -506,7 +506,7 @@ def draw_team_ellipses(
             _draw_chip(frame, f"#{tid}", (cx, cy - ry - 8), team_bgr=color.as_bgr())
 
 
-# ── radial Kalman speed badge (ported from world_cup_projects/common/visual.py) ──
+# ── radial Kalman speed badge ──
 _SPEED_BADGE_BG_BGR = (16, 18, 24)
 SPEED_SPRINT_MS = 5.0
 
@@ -662,9 +662,8 @@ def draw_joystick_dots(
 ) -> None:
     """Draw a team-colored directional velocity dot on each player, optional speed badge.
 
-    The dot color matches the player's team (ported from world_cup
-    ``draw_kalman_joystick_dots``); referees / unassigned rows get no dot. When
-    ``show_speed`` and ``speed_by_tid`` are given, a radial m/s badge rides the dot.
+    The dot color matches the player's team; referees / unassigned rows get no dot.
+    When ``show_speed`` and ``speed_by_tid`` are given, a radial m/s badge rides the dot.
     """
     if len(detections) == 0 or detections.data is None:
         return
@@ -764,7 +763,7 @@ def draw_goals_on_pitch(
     pitch: np.ndarray,
     fill_alpha: float = 0.38,
 ) -> np.ndarray:
-    """Highlight each goal mouth in the defending team's color (ported from world_cup)."""
+    """Highlight each goal mouth in the defending team's color."""
     w = config.width
     length = config.length
     gbw = getattr(config, "goal_box_width", 1832)
@@ -905,7 +904,7 @@ def open_video(path: str) -> tuple[cv2.VideoCapture, float, int, int]:
 
 
 # ---------------------------------------------------------------------------
-# Distance / kinematics  (ported from world_cup_projects/player_stats/speed_distance.py)
+# Distance / kinematics
 # ---------------------------------------------------------------------------
 
 MAX_PHYSICAL_STEP_MS = 12.5   # ~45 km/h hard cap on a single-frame step
@@ -914,7 +913,7 @@ HOMOGRAPHY_XY_SMOOTH = 5      # moving-average window on image feet before warpi
 
 
 def _smooth_xy(xy: np.ndarray, window: int) -> np.ndarray:
-    """Moving-average smooth an (N, 2) trajectory (ported from world_cup speed_distance)."""
+    """Moving-average smooth an (N, 2) trajectory."""
     if len(xy) < 2 or window <= 1:
         return xy
     pad = window // 2

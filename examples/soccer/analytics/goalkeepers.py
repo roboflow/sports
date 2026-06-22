@@ -1,11 +1,5 @@
 """analytics/goalkeepers.py — optional goal-distance goalkeeper team assignment.
 
-Ported (and adapted to this analytics package) from world_cup_projects:
-  - common/teams.py  : resolve_goalkeepers_team_by_goal, apply_goalkeeper_teams_by_goal,
-                       stabilize_goalkeeper_teams
-  - common/pitch.py  : infer_goal_defenders, warmup_goal_defenders_radar (defensive-block
-                       goal-side handshake), image_to_pitch_cm
-
 This is ADDITIVE and OPTIONAL. It does not touch the sports library or the existing
 ``resolve_goalkeepers_team_id`` centroid function in ``analytics/support.py`` (kept as the
 ``centroid`` option / fallback). The better path here assigns each goalkeeper to the team
@@ -13,9 +7,9 @@ defending the *nearer goal mouth*, decides goal sides from a defensive block (th
 defensive outfield players per team — not a whole-team centroid), and locks each goalkeeper
 tracklet's team over the whole clip.
 
-Class-id note: world_cup uses ROLE_PLAYER=0 / ROLE_GOALKEEPER=1; this analytics package uses
-PLAYER_CLASS_ID=2 / GOALKEEPER_CLASS_ID=1 (see support.py). Goal-side ids follow the sports
-pitch template: TEAM_LEFT=0 defends x≈0, TEAM_RIGHT=1 defends x≈length.
+Class-id note: this analytics package uses PLAYER_CLASS_ID=2 / GOALKEEPER_CLASS_ID=1
+(see support.py). Goal-side ids follow the sports pitch template: TEAM_LEFT=0 defends
+x≈0, TEAM_RIGHT=1 defends x≈length.
 """
 
 from __future__ import annotations
@@ -45,9 +39,9 @@ PITCH_WIDTH_CM = float(_PITCH.width)    # 7000
 
 
 # ---------------------------------------------------------------------------
-# Pitch coordinate helper (cm). Mirrors world_cup_projects/common/pitch.image_to_pitch_cm.
-# analytics/homography exposes RansacViewTransformer.transform_points directly, so this is a
-# thin None/empty-safe wrapper rather than a re-implementation.
+# Pitch coordinate helper (cm). analytics/homography exposes
+# RansacViewTransformer.transform_points directly, so this is a thin None/empty-safe
+# wrapper rather than a re-implementation.
 # ---------------------------------------------------------------------------
 
 def image_to_pitch_cm(points_xy: np.ndarray, transformer) -> np.ndarray | None:
