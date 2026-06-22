@@ -332,7 +332,7 @@ class PitchHomographyTracker:
 
 
 # ---------------------------------------------------------------------------
-# replay_tracker_transforms — re-gate from cached keypoints (no disk cache)
+# replay_tracker_transforms — re-gate from cached keypoints
 # ---------------------------------------------------------------------------
 
 def replay_tracker_transforms(
@@ -343,10 +343,7 @@ def replay_tracker_transforms(
     ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
     config: SoccerPitchConfiguration = PITCH_CONFIG,
 ) -> tuple[dict[int, ViewTransformer | None], dict[int, ViewTransformer | None]]:
-    """Re-derive gated speed + radar homographies from already-detected keypoints.
-
-    No disk cache (in-memory only).
-    """
+    """Re-derive gated speed + radar homographies from already-detected keypoints."""
     tracker = PitchHomographyTracker(
         confidence=confidence,
         ransac_thresh=ransac_thresh,
@@ -369,7 +366,7 @@ def replay_tracker_transforms(
 
 @dataclass
 class MetricContext:
-    """Per-frame speed H, radar H, and pitch keypoints (in-memory; no disk cache)."""
+    """Per-frame speed H, radar H, and pitch keypoints."""
 
     transforms: dict[int, Any]       # gated speed H per frame (may be None)
     radar_transforms: dict[int, Any]  # orientation-locked radar H per frame
@@ -413,7 +410,7 @@ class MetricContext:
 
 
 # ---------------------------------------------------------------------------
-# ensure_pitch_homography_maps — build MetricContext from video (no disk cache)
+# ensure_pitch_homography_maps — build MetricContext from video
 # ---------------------------------------------------------------------------
 
 def ensure_pitch_homography_maps(
@@ -424,10 +421,7 @@ def ensure_pitch_homography_maps(
     max_frames: int | None = None,
     pitch_confidence: float = 0.9,
 ) -> MetricContext:
-    """Run pitch keypoint detection on every frame and build gated homographies.
-
-    No disk caching — all maps are held in memory.
-    """
+    """Run pitch keypoint detection on every frame and build gated homographies."""
     tracker = PitchHomographyTracker(confidence=pitch_confidence)
     transforms: dict[int, ViewTransformer | None] = {}
     radar_transforms: dict[int, ViewTransformer | None] = {}
