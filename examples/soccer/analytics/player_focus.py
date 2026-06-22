@@ -22,7 +22,12 @@ from analytics.cache import (
     build_or_load_keypoints,
 )
 from analytics.goalkeepers import apply_goalkeeper_frame, compute_clip_locks
-from analytics.homography import MetricContext, build_metric_from_maps, valid_pitch_cm
+from analytics.homography import (
+    MetricContext,
+    build_metric_from_maps,
+    build_radar_homography_map,
+    valid_pitch_cm,
+)
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
@@ -212,8 +217,10 @@ def run_player_focus(args) -> None:
     )
     speed_transforms = metric.speed_transforms
     gap_filled = metric.speed_transforms_gap_filled(0.9)
-    # Single source of truth for the minimap (traces AND live dots): ungated keypoint H.
-    radar_h_by_frame = metric.keypoint_radar_transforms(0.9)
+    # Single source of truth for the minimap (traces AND live dots): the gated,
+    # orientation-locked radar H (stable + upright), with an orientation-locked ungated
+    # keypoint H fallback on frames the gate never locked.
+    radar_h_by_frame = build_radar_homography_map(metric, confidence=0.9)
 
     gk_assignment = getattr(args, "gk_assignment", "goal_distance")
     needs_frame = args.tracker in ("botsort", "botsort_nocmc")
@@ -409,9 +416,9 @@ def run_player_focus(args) -> None:
                 draw_speed_legend(annotated)
 
             # ── radar minimap with traces ──────────────────────────────────
-            # Live dots use the SAME keypoint-radar H as the traces (one coordinate
-            # frame), falling back to the gated radar H only when it is unavailable.
-            radar_transformer = radar_h_by_frame.get(frame_idx) or metric.radar_transforms.get(frame_idx)
+            # Live dots read the SAME radar H as the traces above (one coordinate
+            # frame), resolved once in radar_h_by_frame.
+            radar_transformer = radar_h_by_frame.get(frame_idx)
             mini_radar = _build_trace_minimap(
                 dets,
                 radar_transformer,

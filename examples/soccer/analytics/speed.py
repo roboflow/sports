@@ -16,7 +16,11 @@ from analytics.cache import (
     build_or_load_keypoints,
 )
 from analytics.goalkeepers import apply_goalkeeper_frame, compute_clip_locks
-from analytics.homography import MetricContext, build_metric_from_maps
+from analytics.homography import (
+    MetricContext,
+    build_metric_from_maps,
+    build_radar_homography_map,
+)
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
@@ -95,9 +99,10 @@ def run_speed(args) -> None:
         kp_by_frame, detections_by_frame=det_by_frame, pitch_confidence=0.9
     )
     gap_filled = metric.speed_transforms_gap_filled(0.9)
-    # Single source of truth for the minimap: ungated keypoint-radar H (labelled
-    # correspondences keep it upright), with the gated radar H as a fallback.
-    radar_h_by_frame = metric.keypoint_radar_transforms(0.9)
+    # Single source of truth for the minimap: the gated, orientation-locked radar H
+    # (stable across frames and upright), falling back to an orientation-locked ungated
+    # keypoint H on frames the gate never locked.
+    radar_h_by_frame = build_radar_homography_map(metric, confidence=0.9)
 
     gk_assignment = getattr(args, "gk_assignment", "goal_distance")
     needs_frame = args.tracker in ("botsort", "botsort_nocmc")
@@ -211,8 +216,9 @@ def run_speed(args) -> None:
             )
             draw_speed_legend(annotated)
 
-            # radar minimap: ungated keypoint H (upright), gated radar H as fallback
-            radar_t = radar_h_by_frame.get(frame_idx) or metric.radar_transforms.get(frame_idx)
+            # radar minimap: gated orientation-locked radar H (stable), with the
+            # orientation-locked keypoint H fallback resolved in radar_h_by_frame.
+            radar_t = radar_h_by_frame.get(frame_idx)
             if radar_t is not None:
                 draw_radar_minimap(
                     annotated, dets, radar_t,

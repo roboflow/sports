@@ -296,6 +296,109 @@ def homography_from_keypoints_radar(
 
 
 # ---------------------------------------------------------------------------
+# Minimap homography selection (stable, orientation-locked)
+# ---------------------------------------------------------------------------
+
+def _first_locked_radar_transform(
+    radar_transforms: dict[int, ViewTransformer | None],
+) -> ViewTransformer | None:
+    """First non-None radar H in frame order — the upright orientation anchor."""
+    for frame_idx in sorted(int(fi) for fi in radar_transforms):
+        transformer = radar_transforms[frame_idx]
+        if transformer is not None:
+            return transformer
+    return None
+
+
+def _orientation_locked_keypoint_radar(
+    keypoints: sv.KeyPoints | None,
+    anchor: ViewTransformer | None,
+    *,
+    config: SoccerPitchConfiguration = PITCH_CONFIG,
+    confidence: float = 0.9,
+    min_keypoints: int = DISPLAY_MIN_KEYPOINTS,
+) -> ViewTransformer | None:
+    """Ungated per-frame keypoint H, flipped to match the locked pitch orientation.
+
+    Anti-flip fallback for radar frames the gated tracker never locked: fits the plain
+    and mirrored keypoint homographies and keeps whichever agrees with the orientation
+    anchor, so a stray fallback frame cannot mirror the pitch on the minimap.
+    """
+    if keypoints is None or keypoints.xy.shape[0] == 0:
+        return None
+    n = pitch_vertex_count(config)
+    xy, conf = align_pitch_keypoints(keypoints, n_vertices=n)
+    mask = pitch_keypoint_accept_mask(xy, conf, confidence=confidence)
+    if mask.sum() < min_keypoints:
+        return None
+    src = xy[mask].astype(np.float32)
+    dst = np.array(config.vertices, dtype=np.float32)[mask]
+    fallback: ViewTransformer | None = None
+    for target in (dst, _flip_pitch_x_targets(dst, float(config.length))):
+        try:
+            candidate = RansacViewTransformer(source=src, target=target, use_ransac=False)
+        except ValueError:
+            continue
+        if anchor is None or _orientation_matches_anchor(candidate, anchor, src):
+            return candidate
+        fallback = fallback or candidate
+    return fallback
+
+
+def radar_homography_for_frame(
+    metric: "MetricContext",
+    frame_idx: int,
+    *,
+    confidence: float = 0.9,
+    anchor: ViewTransformer | None = None,
+) -> ViewTransformer | None:
+    """Pick the per-frame minimap/trace/live-dot homography (stable and upright).
+
+    Resolution order:
+      1. the gated, orientation-locked, hold-on-fail radar H (``radar_transforms``),
+         which is both stable across frames and oriented correctly via the
+         layout-scored candidate selection;
+      2. an orientation-locked ungated keypoint H as an anti-flip fallback on frames
+         the gate never locked;
+      3. the raw ungated keypoint H as a last resort.
+
+    Traces and live dots must read from this single source per frame so they never
+    drift onto different coordinate frames.
+    """
+    frame_idx = int(frame_idx)
+    gated = metric.radar_transforms.get(frame_idx)
+    if gated is not None:
+        return gated
+    if anchor is None:
+        anchor = _first_locked_radar_transform(metric.radar_transforms)
+    keypoints = (metric.keypoints or {}).get(frame_idx)
+    locked = _orientation_locked_keypoint_radar(keypoints, anchor, confidence=confidence)
+    if locked is not None:
+        return locked
+    return metric.keypoint_radar_transforms(confidence).get(frame_idx)
+
+
+def build_radar_homography_map(
+    metric: "MetricContext",
+    *,
+    confidence: float = 0.9,
+) -> dict[int, ViewTransformer | None]:
+    """Resolve :func:`radar_homography_for_frame` for every known frame, once.
+
+    The orientation anchor is computed a single time so the motion features read the
+    minimap homography (traces and live dots alike) from one shared, frame-keyed map.
+    """
+    anchor = _first_locked_radar_transform(metric.radar_transforms)
+    frames = set(metric.radar_transforms) | set(metric.keypoints or {})
+    return {
+        int(fi): radar_homography_for_frame(
+            metric, int(fi), confidence=confidence, anchor=anchor
+        )
+        for fi in frames
+    }
+
+
+# ---------------------------------------------------------------------------
 # PitchHomographyTracker
 # ---------------------------------------------------------------------------
 
