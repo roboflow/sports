@@ -788,18 +788,50 @@ def draw_goals_on_pitch(
     return pitch
 
 
+# ── radar / minimap geometry + opacity ──
+# The minimap panel is alpha-blended over the footage (not pasted opaque) so both the
+# radar and the underlying game frame stay visible behind it.
+RADAR_MINIMAP_SCALE = 0.065
+RADAR_MINIMAP_PAD = 30
+RADAR_MINIMAP_ALPHA = 0.6  # blend weight of the minimap panel over the footage
+
+
+def overlay_minimap(
+    frame: np.ndarray,
+    radar: np.ndarray,
+    *,
+    margin_x: int = 12,
+    margin_y: int = 12,
+    alpha: float = RADAR_MINIMAP_ALPHA,
+) -> None:
+    """Alpha-blend a radar panel into the bottom-right corner of ``frame`` in place.
+
+    Blending (instead of an opaque paste) keeps both the radar and the footage it sits
+    on top of legible; shared by every demo that draws a minimap.
+    """
+    rh, rw = radar.shape[:2]
+    fh, fw = frame.shape[:2]
+    x0 = fw - rw - margin_x
+    y0 = fh - rh - margin_y
+    if x0 < 0 or y0 < 0:
+        return
+    roi = frame[y0:y0 + rh, x0:x0 + rw]
+    cv2.addWeighted(radar, alpha, roi, 1.0 - alpha, 0, roi)
+
+
 def draw_radar_minimap(
     frame: np.ndarray,
     detections: sv.Detections,
     transformer: ViewTransformer | None,
     *,
-    minimap_scale: float = 0.065,
-    padding: int = 30,
+    minimap_scale: float = RADAR_MINIMAP_SCALE,
+    padding: int = RADAR_MINIMAP_PAD,
     margin_x: int = 12,
     margin_y: int = 12,
     locked_goal_defenders: tuple[int, int] | None = None,
+    alpha: float = RADAR_MINIMAP_ALPHA,
 ) -> np.ndarray:
-    """Overlay a radar minimap in the bottom-right corner of frame."""
+    """Overlay a translucent radar minimap in the bottom-right corner of frame."""
     from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
     from sports.configs.soccer import SoccerPitchConfiguration
 
@@ -846,12 +878,7 @@ def draw_radar_minimap(
                     pitch=radar,
                 )
 
-    rh, rw = radar.shape[:2]
-    fh, fw = frame.shape[:2]
-    x0 = fw - rw - margin_x
-    y0 = fh - rh - margin_y
-    if x0 >= 0 and y0 >= 0:
-        frame[y0:y0 + rh, x0:x0 + rw] = radar
+    overlay_minimap(frame, radar, margin_x=margin_x, margin_y=margin_y, alpha=alpha)
     return frame
 
 
