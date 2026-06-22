@@ -88,8 +88,8 @@ def _draw_hud(
 ) -> None:
     h = frame.shape[0]
     x, y = 18, h - 150
-    # title
-    cv2.putText(frame, f"TRACK #{track_id}", (x, y), cv2.FONT_HERSHEY_DUPLEX, 0.8, (180, 80, 255), 2, cv2.LINE_AA)
+    # title — name the subject without exposing the raw tracker id
+    cv2.putText(frame, "FOCUS PLAYER", (x, y), cv2.FONT_HERSHEY_DUPLEX, 0.8, (180, 80, 255), 2, cv2.LINE_AA)
     status_color = (80, 255, 80) if visible else (80, 80, 200)
     cv2.putText(frame, "on pitch" if visible else "occluded", (x, y + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.45, status_color, 1, cv2.LINE_AA)
     speed_str = f"speed:  {speed_ms:.1f} m/s  ({speed_ms * MS_TO_KMH:.1f} km/h)" if speed_ms is not None else "speed:  —"
@@ -377,7 +377,8 @@ def run_player_focus(args) -> None:
 
             # ── render ─────────────────────────────────────────────────────
             if focus_tid is not None:
-                # spotlight mode: dim, then restore focus player area
+                # spotlight mode: dim the scene, then restore the focus player area and
+                # annotate ONLY the focus player so the others stay dimmed and unmarked
                 focus_mask = dets.tracker_id == focus_tid if dets.tracker_id is not None else np.zeros(len(dets), dtype=bool)
                 visible = bool(focus_mask.any())
                 if visible:
@@ -386,12 +387,16 @@ def run_player_focus(args) -> None:
                     annotated = _spotlight(frame, cx_f, cy_f, radius=200)
                 else:
                     annotated = _dim_frame(frame)
+                marked = dets[focus_mask]
             else:
                 annotated = frame.copy()
+                marked = dets
 
-            draw_team_ellipses(annotated, dets)
+            # Raw track-id numbers look noisy on the broadcast frame; never label them
+            # in focus modes (the HUD names the focused player instead).
+            draw_team_ellipses(annotated, marked, show_ids=False)
             draw_joystick_dots(
-                annotated, dets, joy_smoother,
+                annotated, marked, joy_smoother,
                 speed_by_tid=speed_by_tid, show_speed=True,
             )
             if focus_tid is None:
