@@ -347,26 +347,21 @@ def apply_goalkeeper_frame(
     return dets
 
 
-def compute_goalkeeper_lock(
+def collect_team_frames(
     source_video_path: str,
     *,
     player_detector_fn,
     team_classifier,
     tracker,
     needs_frame: bool,
-    metric,
-    pitch_confidence: float = 0.9,
     max_frames: int | None = None,
-) -> dict[int, int]:
-    """Build the clip-stable ``{tracker_id: team}`` goalkeeper lock for goal-distance mode.
+) -> list[tuple[int, sv.Detections]]:
+    """One detect→track→classify pass over the clip → ``[(frame_idx, detections)]``.
 
-    Runs a single pass over the clip: player detection → tracking → outfield team
-    classification (goalkeepers stay TEAM_NONE here), then votes the defending teams
-    (defensive-block handshake) and stabilizes each goalkeeper tracklet over the whole clip.
-
-    ``tracker`` must be a fresh tracker of the same kind used in the render pass so the
-    tracker ids align (the existing distance/focus two-pass code relies on the same
-    determinism). Returns ``{}`` when no goalkeeper tracklet can be stabilized.
+    Outfield players are team-classified; goalkeepers stay TEAM_NONE here (they are
+    resolved later by the goal-distance / centroid logic). ``tracker`` must be a fresh
+    tracker of the same kind used in the render pass so tracker ids align (the existing
+    two-pass distance/focus code relies on this same determinism).
     """
     import cv2
 
@@ -414,15 +409,53 @@ def compute_goalkeeper_lock(
             frames.append((frame_idx, dets))
     finally:
         cap.release()
+    return frames
 
-    locked = warmup_goal_defenders_radar(
-        frames, metric.keypoints, confidence=pitch_confidence
+
+def compute_clip_locks(
+    source_video_path: str,
+    *,
+    player_detector_fn,
+    team_classifier,
+    tracker,
+    needs_frame: bool,
+    gk_assignment: str = "goal_distance",
+    metric=None,
+    pitch_confidence: float = 0.9,
+    max_frames: int | None = None,
+) -> tuple[dict[int, int], dict[int, int], tuple[int, int] | None]:
+    """Clip-level stabilization from a single detect→track→classify pass.
+
+    Returns ``(team_lock, gk_lock, locked_goal_defenders)``:
+      - ``team_lock``: majority-vote team per outfield tracklet (always computed).
+      - ``gk_lock``: stabilized team per goalkeeper tracklet (goal-distance mode only).
+      - ``locked_goal_defenders``: ``(left_team, right_team)`` for radar goal shading
+        (goal-distance mode only, else ``None``).
+    """
+    from analytics.teams import lock_teams_by_tracklet_majority
+
+    frames = collect_team_frames(
+        source_video_path,
+        player_detector_fn=player_detector_fn,
+        team_classifier=team_classifier,
+        tracker=tracker,
+        needs_frame=needs_frame,
+        max_frames=max_frames,
     )
-    return stabilize_goalkeeper_teams(
-        frames,
-        transforms=metric.radar_transforms,
-        keypoints_by_frame=metric.keypoints,
-        locked_goal_defenders=locked,
-        pitch_confidence=pitch_confidence,
-        mutate=False,
-    )
+    team_lock = lock_teams_by_tracklet_majority(frames)
+
+    gk_lock: dict[int, int] = {}
+    locked_goal_defenders: tuple[int, int] | None = None
+    if gk_assignment == "goal_distance" and metric is not None:
+        locked_goal_defenders = warmup_goal_defenders_radar(
+            frames, metric.keypoints, confidence=pitch_confidence
+        )
+        gk_lock = stabilize_goalkeeper_teams(
+            frames,
+            transforms=metric.radar_transforms,
+            keypoints_by_frame=metric.keypoints,
+            locked_goal_defenders=locked_goal_defenders,
+            pitch_confidence=pitch_confidence,
+            mutate=False,
+        )
+    return team_lock, gk_lock, locked_goal_defenders
