@@ -23,6 +23,16 @@ from sports.configs.soccer import SoccerPitchConfiguration
 # ── constants ──────────────────────────────────────────────────────────────────
 HOMOGRAPHY_RANSAC_REPROJ_THRESH = 10.0
 SPEED_GATE_MAX_REPROJ_PX = 11.0
+# Maximum per-frame homography jump tolerated between two CONSECUTIVE accepted fits,
+# measured as the largest pitch-space displacement (cm) of the frame's own keypoint
+# correspondences when warped through the previous accepted H vs the new candidate H.
+# A candidate that clears the reprojection gate can still teleport the whole mapping
+# for a single frame (corrupting the radar trace); such a frame is rejected and the
+# previous locked H is held. 600 cm (6 m) sits well above normal frame-to-frame camera
+# motion of in-view points yet far below a genuine misfit jump, so it only rejects
+# spikes without over-rejecting ordinary panning. The gate is skipped right after any
+# gap (no consecutive prior accept) so a stale lock cannot block recovery.
+SPEED_GATE_MAX_JUMP_CM = 600.0
 DISPLAY_MIN_KEYPOINTS = 4
 PITCH_CONFIG = SoccerPitchConfiguration()
 
@@ -174,6 +184,28 @@ def _flip_pitch_x_targets(dst: np.ndarray, length: float) -> np.ndarray:
     out = dst.copy()
     out[:, 0] = length - out[:, 0]
     return out
+
+
+def _homography_jump_cm(
+    prev: ViewTransformer, candidate: ViewTransformer, src: np.ndarray
+) -> float:
+    """Largest pitch-space displacement (cm) between two image→pitch homographies.
+
+    Warps the same in-view image points (the frame's accepted keypoints) through the
+    previous accepted H and the new candidate H, and returns the max distance between
+    the two pitch mappings — how far a fixed image point would teleport on the pitch if
+    the candidate replaced the previous H.
+    """
+    if src is None or len(src) == 0:
+        return 0.0
+    pts = np.asarray(src, dtype=np.float32)
+    prev_cm = prev.transform_points(pts)
+    cand_cm = candidate.transform_points(pts)
+    deltas = np.linalg.norm(cand_cm - prev_cm, axis=1)
+    finite = deltas[np.isfinite(deltas)]
+    if finite.size == 0:
+        return float("inf")
+    return float(finite.max())
 
 
 def valid_pitch_cm(
@@ -414,15 +446,21 @@ class PitchHomographyTracker:
         confidence: float = 0.9,
         ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
         max_reproj_px: float = SPEED_GATE_MAX_REPROJ_PX,
+        max_jump_cm: float = SPEED_GATE_MAX_JUMP_CM,
         config: SoccerPitchConfiguration | None = None,
     ) -> None:
         self.confidence = confidence
         self.ransac_thresh = ransac_thresh
         self.max_reproj_px = max_reproj_px
+        self.max_jump_cm = max_jump_cm
         self.config = config or PITCH_CONFIG
         self._targets = np.array(self.config.vertices, dtype=np.float32)
         self._locked: ViewTransformer | None = None
         self._orientation_anchor: ViewTransformer | None = None
+        # Was the immediately preceding frame an accept? The jump gate only fires
+        # between consecutive accepts, so a stale lock held across a gap cannot block
+        # re-baselining once a good fit returns.
+        self._last_was_accept: bool = False
 
     def _frame_correspondences(
         self, keypoints: sv.KeyPoints
@@ -489,26 +527,44 @@ class PitchHomographyTracker:
         player ``detections`` are passed they steer the plain-vs-mirror orientation pick.
         """
         if keypoints is None or keypoints.xy.shape[0] == 0:
+            self._last_was_accept = False
             return None, self._locked
 
         pair = self._frame_correspondences(keypoints)
         if pair is None:
+            self._last_was_accept = False
             return None, self._locked
 
         src_now, dst_now = pair
         fitted = self._fit_frame(src_now, dst_now, detections=detections)
         if fitted is None:
+            self._last_was_accept = False
             return None, self._locked
 
         cand_t, target = fitted
         err = _mean_reproj_px(cand_t, src_now, target)
         if err <= self.max_reproj_px:
+            # Jump gate: a candidate that clears the reprojection gate can still
+            # teleport the whole mapping for one frame. Reject it (hold the previous H,
+            # treated like a gate-fail so the gap-fill / locked path takes over) when it
+            # would displace the in-view points beyond ``max_jump_cm`` relative to the
+            # previous accepted H. Only applied between consecutive accepts so the first
+            # frame and post-gap recovery frames are exempt.
+            if (
+                self._locked is not None
+                and self._last_was_accept
+                and _homography_jump_cm(self._locked, cand_t, src_now) > self.max_jump_cm
+            ):
+                self._last_was_accept = False
+                return None, self._locked
             if self._orientation_anchor is None:
                 self._orientation_anchor = cand_t
             self._locked = cand_t
+            self._last_was_accept = True
             return cand_t, self._locked
 
         # RANSAC failed gate — try plain fallback just for radar lock
+        self._last_was_accept = False
         if self._locked is None:
             try:
                 fallback = RansacViewTransformer(
@@ -529,6 +585,7 @@ def replay_tracker_transforms(
     *,
     confidence: float = 0.9,
     max_reproj_px: float = SPEED_GATE_MAX_REPROJ_PX,
+    max_jump_cm: float = SPEED_GATE_MAX_JUMP_CM,
     ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
     config: SoccerPitchConfiguration = PITCH_CONFIG,
     detections_by_frame: dict[int, sv.Detections] | None = None,
@@ -542,6 +599,7 @@ def replay_tracker_transforms(
         confidence=confidence,
         ransac_thresh=ransac_thresh,
         max_reproj_px=max_reproj_px,
+        max_jump_cm=max_jump_cm,
         config=config,
     )
     transforms: dict[int, ViewTransformer | None] = {}
@@ -561,6 +619,7 @@ def build_metric_from_maps(
     detections_by_frame: dict[int, sv.Detections] | None = None,
     pitch_confidence: float = 0.9,
     max_reproj_px: float = SPEED_GATE_MAX_REPROJ_PX,
+    max_jump_cm: float = SPEED_GATE_MAX_JUMP_CM,
     ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
     config: SoccerPitchConfiguration = PITCH_CONFIG,
 ) -> "MetricContext":
@@ -573,6 +632,7 @@ def build_metric_from_maps(
         keypoints_by_frame,
         confidence=pitch_confidence,
         max_reproj_px=max_reproj_px,
+        max_jump_cm=max_jump_cm,
         ransac_thresh=ransac_thresh,
         config=config,
         detections_by_frame=detections_by_frame,
