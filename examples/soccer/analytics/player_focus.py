@@ -16,8 +16,13 @@ import cv2
 import numpy as np
 import supervision as sv
 
+from analytics.cache import (
+    FrameCache,
+    build_or_load_detections,
+    build_or_load_keypoints,
+)
 from analytics.goalkeepers import apply_goalkeeper_frame, compute_clip_locks
-from analytics.homography import MetricContext, ensure_pitch_homography_maps, valid_pitch_cm
+from analytics.homography import MetricContext, build_metric_from_maps, valid_pitch_cm
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
@@ -27,6 +32,7 @@ from analytics.support import (
     JoystickDotSmoother,
     MS_TO_KMH,
     attach_kalman_velocity,
+    kalman_velocity_arrays,
     collect_tracks,
     compute_kinematics,
     create_player_detector,
@@ -158,34 +164,48 @@ def run_player_focus(args) -> None:
     cap, fps, width, height = open_video(args.source_video_path)
     focus_tid: int | None = getattr(args, "track_id", None)
 
+    player_model_id = getattr(args, "player_model_id", "football-players-detection-3zvbc/11")
+    pitch_model_id = getattr(args, "pitch_model_id", "football-field-detection-f07vi/15")
     player_detector_fn = create_player_detector(
         backend=args.player_detector,
         model_path=getattr(args, "player_model_path", None),
-        model_id=getattr(args, "player_model_id", "football-players-detection-3zvbc/11"),
+        model_id=player_model_id,
         device=args.device,
         api_key=getattr(args, "api_key", None),
     )
     pitch_detector_fn = create_pitch_keypoint_detector(
         backend=args.pitch_detector,
         model_path=getattr(args, "pitch_model_path", None),
-        model_id=getattr(args, "pitch_model_id", "football-field-detection-f07vi/15"),
+        model_id=pitch_model_id,
         device=args.device,
         api_key=getattr(args, "api_key", None),
     )
 
+    # On-disk cache: detections + pitch keypoints are computed once, reused after.
+    cache = FrameCache(
+        args.source_video_path,
+        cache_dir=getattr(args, "cache_dir", None),
+        enabled=getattr(args, "cache", True),
+        player_backend=args.player_detector,
+        player_model_id=player_model_id,
+        pitch_backend=args.pitch_detector,
+        pitch_model_id=pitch_model_id,
+    )
+    det_by_frame = build_or_load_detections(
+        args.source_video_path, player_detector_fn, cache, max_frames=args.max_frames
+    )
+    kp_by_frame = build_or_load_keypoints(
+        args.source_video_path, pitch_detector_fn, cache, max_frames=args.max_frames
+    )
+
     print("Fitting team classifier…")
     team_classifier = fit_team_classifier(
-        cap, player_detector_fn, device=args.device, max_frames=args.max_frames
+        cap, device=args.device, max_frames=args.max_frames, det_by_frame=det_by_frame
     )
 
     print("Building pitch homography maps…")
-    metric: MetricContext = ensure_pitch_homography_maps(
-        args.source_video_path,
-        pitch_detector_fn,
-        fps=fps,
-        max_frames=args.max_frames,
-        pitch_confidence=0.9,
-        player_detector_fn=player_detector_fn,
+    metric: MetricContext = build_metric_from_maps(
+        kp_by_frame, detections_by_frame=det_by_frame, pitch_confidence=0.9
     )
     speed_transforms = metric.speed_transforms
     gap_filled = metric.speed_transforms_gap_filled(0.9)
@@ -197,13 +217,13 @@ def run_player_focus(args) -> None:
     print("Building clip locks (team-id + goalkeeper)…")
     team_lock, gk_lock, locked_goal_defenders = compute_clip_locks(
         args.source_video_path,
-        player_detector_fn=player_detector_fn,
         team_classifier=team_classifier,
         tracker=create_player_tracker(fps, kind=args.tracker),
         needs_frame=needs_frame,
         gk_assignment=gk_assignment,
         metric=metric,
         max_frames=args.max_frames,
+        detections_by_frame=det_by_frame,
     )
 
     # ── First pass: collect tracks for distance kinematics ─────────────────
@@ -220,7 +240,9 @@ def run_player_focus(args) -> None:
             fi += 1
             if args.max_frames is not None and fi > args.max_frames:
                 break
-            raw = player_detector_fn(frame)
+            raw = det_by_frame.get(fi)
+            if raw is None:
+                raw = sv.Detections.empty()
             players = raw[raw.class_id == PLAYER_CLASS_ID]
             gks = raw[raw.class_id == GOALKEEPER_CLASS_ID]
             trackable = sv.Detections.merge([players, gks]) if (len(players) or len(gks)) else sv.Detections.empty()
@@ -259,7 +281,9 @@ def run_player_focus(args) -> None:
             if args.max_frames is not None and frame_idx > args.max_frames:
                 break
 
-            raw = player_detector_fn(frame)
+            raw = det_by_frame.get(frame_idx)
+            if raw is None:
+                raw = sv.Detections.empty()
             players = raw[raw.class_id == PLAYER_CLASS_ID]
             gks = raw[raw.class_id == GOALKEEPER_CLASS_ID]
             trackable = sv.Detections.merge([players, gks]) if (len(players) or len(gks)) else sv.Detections.empty()
@@ -297,7 +321,20 @@ def run_player_focus(args) -> None:
                 tracked = apply_goalkeeper_frame(
                     tracked, metric.radar_transforms.get(frame_idx), gk_lock
                 )
-            dets = attach_kalman_velocity(tracked, tracker_p2, needs_frame=needs_frame, image=frame)
+            # Read Kalman velocity from the tracker already advanced above; a second
+            # tracker.update() here would inflate/fragment tracker ids each frame and
+            # break the --track-id spotlight (and cross-pass distance attribution).
+            kf_vx, kf_vy = kalman_velocity_arrays(tracked, tracker_p2)
+            data = dict(tracked.data) if tracked.data else {}
+            data["kf_vx"] = kf_vx
+            data["kf_vy"] = kf_vy
+            dets = sv.Detections(
+                xyxy=tracked.xyxy,
+                class_id=tracked.class_id,
+                tracker_id=tracked.tracker_id,
+                confidence=tracked.confidence,
+                data=data,
+            )
             dets = vel_smoother.smooth_detections(dets)
 
             # ── update trace buffers (radar H → pitch cm) ──────────────────

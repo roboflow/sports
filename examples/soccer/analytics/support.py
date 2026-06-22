@@ -53,19 +53,26 @@ def create_player_tracker(
 ):
     """Return a multi-object tracker configured for football players."""
     if kind == "bytetrack":
-        return ByteTrackTracker(
+        tracker = ByteTrackTracker(
             frame_rate=frame_rate,
             track_activation_threshold=track_activation_threshold,
             high_conf_det_threshold=high_conf_det_threshold,
         )
-    return BoTSORTTracker(
-        frame_rate=frame_rate,
-        track_activation_threshold=track_activation_threshold,
-        high_conf_det_threshold=high_conf_det_threshold,
-        minimum_iou_threshold_first_assoc=minimum_iou_threshold_first_assoc,
-        enable_cmc=(kind == "botsort"),
-        cmc_method="sparseOptFlow",
-    )
+    else:
+        tracker = BoTSORTTracker(
+            frame_rate=frame_rate,
+            track_activation_threshold=track_activation_threshold,
+            high_conf_det_threshold=high_conf_det_threshold,
+            minimum_iou_threshold_first_assoc=minimum_iou_threshold_first_assoc,
+            enable_cmc=(kind == "botsort"),
+            cmc_method="sparseOptFlow",
+        )
+    # Tracker ids are minted from a class-level counter shared across instances. Reset
+    # it here so each sequential pass (goalkeeper lock / first pass / render) starts ids
+    # from 0; this keeps ids consistent across passes so per-tracklet locks and the
+    # PLAYER_FOCUS --track-id selection refer to the same players in every pass.
+    tracker.reset()
+    return tracker
 
 
 # ---------------------------------------------------------------------------
@@ -400,13 +407,18 @@ def create_pitch_keypoint_detector(
 
 def fit_team_classifier(
     cap: cv2.VideoCapture,
-    player_detector_fn: Callable[[np.ndarray], sv.Detections],
+    player_detector_fn: Callable[[np.ndarray], sv.Detections] | None = None,
     *,
     device: str = "cpu",
     stride: int = STRIDE,
     max_frames: int | None = None,
+    det_by_frame: dict[int, sv.Detections] | None = None,
 ) -> TeamClassifier:
-    """Sample frames at STRIDE and fit TeamClassifier on player crops."""
+    """Sample frames at STRIDE and fit TeamClassifier on player crops.
+
+    When ``det_by_frame`` is supplied (e.g. from the on-disk detection cache) the boxes
+    are taken from it instead of re-running the detector.
+    """
     team_classifier = TeamClassifier(device=device)
     crops: list[np.ndarray] = []
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -420,7 +432,12 @@ def fit_team_classifier(
             break
         if frame_idx % stride != 0:
             continue
-        dets = player_detector_fn(frame)
+        if det_by_frame is not None:
+            dets = det_by_frame.get(frame_idx)
+            if dets is None:
+                continue
+        else:
+            dets = player_detector_fn(frame)
         players = dets[dets.class_id == PLAYER_CLASS_ID]
         crops.extend(get_crops(frame, players))
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
