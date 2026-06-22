@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import supervision as sv
 
+from analytics.goalkeepers import apply_goalkeeper_frame, compute_goalkeeper_lock
 from analytics.homography import MetricContext, ensure_pitch_homography_maps
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
@@ -71,8 +72,22 @@ def run_speed(args) -> None:
     )
     gap_filled = metric.speed_transforms_gap_filled(0.9)
 
-    tracker = create_player_tracker(fps, kind=args.tracker)
+    gk_assignment = getattr(args, "gk_assignment", "goal_distance")
     needs_frame = args.tracker in ("botsort", "botsort_nocmc")
+    gk_lock: dict[int, int] = {}
+    if gk_assignment == "goal_distance":
+        print("Building goalkeeper team lock (goal-distance)…")
+        gk_lock = compute_goalkeeper_lock(
+            args.source_video_path,
+            player_detector_fn=player_detector_fn,
+            team_classifier=team_classifier,
+            tracker=create_player_tracker(fps, kind=args.tracker),
+            needs_frame=needs_frame,
+            metric=metric,
+            max_frames=args.max_frames,
+        )
+
+    tracker = create_player_tracker(fps, kind=args.tracker)
     vel_smoother = KalmanVelocitySmoother(alpha=0.3)
     speed_smoother = KalmanSpeedDisplaySmoother(alpha=0.3)
     joy_smoother = JoystickDotSmoother(alpha=0.32)
@@ -105,14 +120,15 @@ def run_speed(args) -> None:
                 if len(t_players):
                     pl_teams = team_classifier.predict(get_crops(frame, t_players))
                     team_arr[tracked.class_id == PLAYER_CLASS_ID] = pl_teams
-                t_gks = tracked[tracked.class_id == GOALKEEPER_CLASS_ID]
-                if len(t_gks) and (team_arr == 0).any() and (team_arr == 1).any():
-                    gk_teams = resolve_goalkeepers_team_id(
-                        tracked[tracked.class_id == PLAYER_CLASS_ID],
-                        team_arr[tracked.class_id == PLAYER_CLASS_ID],
-                        t_gks,
-                    )
-                    team_arr[tracked.class_id == GOALKEEPER_CLASS_ID] = gk_teams
+                if gk_assignment == "centroid":
+                    t_gks = tracked[tracked.class_id == GOALKEEPER_CLASS_ID]
+                    if len(t_gks) and (team_arr == 0).any() and (team_arr == 1).any():
+                        gk_teams = resolve_goalkeepers_team_id(
+                            tracked[tracked.class_id == PLAYER_CLASS_ID],
+                            team_arr[tracked.class_id == PLAYER_CLASS_ID],
+                            t_gks,
+                        )
+                        team_arr[tracked.class_id == GOALKEEPER_CLASS_ID] = gk_teams
 
             tracked = sv.Detections(
                 xyxy=tracked.xyxy,
@@ -121,6 +137,12 @@ def run_speed(args) -> None:
                 confidence=tracked.confidence,
                 data={**(tracked.data or {}), "team": team_arr},
             )
+
+            # ── goal-distance GK assignment (per-frame + clip lock) ────────
+            if gk_assignment == "goal_distance":
+                tracked = apply_goalkeeper_frame(
+                    tracked, metric.radar_transforms.get(frame_idx), gk_lock
+                )
 
             # ── Kalman velocity ────────────────────────────────────────────
             dets = attach_kalman_velocity(tracked, tracker, needs_frame=needs_frame, image=frame)

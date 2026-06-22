@@ -78,6 +78,9 @@ def run_direction(args) -> None:
             )
 
             # ── team classification ────────────────────────────────────────
+            # DIRECTION has no pitch homography by design, so the goal-distance GK
+            # path (which needs pitch coords) is not available here: regardless of
+            # --gk-assignment we always use the centroid rule for goalkeepers.
             team_arr = np.full(len(tracked), TEAM_NONE, dtype=int)
             if len(tracked):
                 t_players = tracked[tracked.class_id == PLAYER_CLASS_ID]

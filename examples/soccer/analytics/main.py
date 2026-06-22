@@ -103,6 +103,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Roboflow API key (also read from ROBOFLOW_API_KEY env var)",
     )
 
+    # ── goalkeeper team assignment ───────────────────────────────────────────
+    parser.add_argument(
+        "--gk-assignment",
+        dest="gk_assignment",
+        default="goal_distance",
+        choices=("goal_distance", "centroid"),
+        help=(
+            "Goalkeeper team assignment for analytics features. 'goal_distance' (default) "
+            "assigns each GK to the team defending the nearer goal via pitch homography + a "
+            "defensive-block goal-side handshake, locked per tracklet over the clip "
+            "(SPEED/DISTANCE/PLAYER_FOCUS only). 'centroid' uses the stock nearest-team-"
+            "centroid rule. DIRECTION always uses centroid (it has no homography)."
+        ),
+    )
+
     # ── PLAYER_FOCUS ─────────────────────────────────────────────────────────
     parser.add_argument(
         "--track-id",
