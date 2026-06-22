@@ -177,6 +177,78 @@ def _flip_pitch_x_targets(dst: np.ndarray, length: float) -> np.ndarray:
     return out
 
 
+def valid_pitch_cm(
+    xy: np.ndarray,
+    config: SoccerPitchConfiguration = PITCH_CONFIG,
+    *,
+    margin_cm: float = 200.0,
+) -> np.ndarray:
+    """Mask for warped points that fall inside the pitch rectangle (drops outliers)."""
+    if xy is None or len(xy) == 0:
+        return np.zeros(0, dtype=bool)
+    finite = np.isfinite(xy).all(axis=1)
+    return (
+        finite
+        & (xy[:, 0] >= margin_cm)
+        & (xy[:, 0] <= config.length - margin_cm)
+        & (xy[:, 1] >= margin_cm)
+        & (xy[:, 1] <= config.width - margin_cm)
+    )
+
+
+def _players_on_pitch_score(
+    transformer: ViewTransformer,
+    detections,
+    config: SoccerPitchConfiguration = PITCH_CONFIG,
+) -> tuple[int, float]:
+    """Count in-bounds players and team separation (cm) under a candidate homography.
+
+    A correctly oriented homography places most players inside the pitch rectangle and
+    keeps the two teams horizontally separated; a mirrored one tends to throw players
+    off-pitch. Team separation is only used when team ids are present on ``detections``.
+    """
+    from analytics.support import feet_xy, player_mask
+
+    pmask = player_mask(detections)
+    if not pmask.any():
+        return 0, 0.0
+    feet = feet_xy(detections)[pmask].astype(np.float32)
+    cm = transformer.transform_points(feet)
+    in_bounds = int(valid_pitch_cm(cm, config, margin_cm=80.0).sum())
+    separation = 0.0
+    team = detections.data.get("team") if detections.data else None
+    if team is not None:
+        teams = np.asarray(team)[pmask]
+        if np.any(teams == 0) and np.any(teams == 1):
+            separation = abs(
+                float(cm[teams == 0, 0].mean()) - float(cm[teams == 1, 0].mean())
+            )
+    return in_bounds, separation
+
+
+def _score_homography_candidate(
+    transformer: ViewTransformer,
+    src: np.ndarray,
+    target: np.ndarray,
+    detections,
+    *,
+    max_reproj_px: float,
+) -> float:
+    """Layout score for a candidate H (higher is better).
+
+    Rewards players landing on the pitch and the two teams being spread apart, and
+    penalizes keypoint reprojection error. Candidates above the reprojection gate, or
+    with too few players on the pitch, are pushed to the bottom of the ranking.
+    """
+    err = _mean_reproj_px(transformer, src, target)
+    if err > max_reproj_px:
+        return -1e9
+    in_bounds, separation = _players_on_pitch_score(transformer, detections)
+    if in_bounds < 4:
+        return -1e6 + in_bounds
+    return in_bounds * 15.0 + separation / 40.0 - err * 2.0
+
+
 def _orientation_matches_anchor(
     candidate: ViewTransformer,
     anchor: ViewTransformer,
@@ -261,10 +333,18 @@ class PitchHomographyTracker:
         return xy[mask].astype(np.float32), self._targets[mask]
 
     def _fit_frame(
-        self, src: np.ndarray, dst: np.ndarray
+        self, src: np.ndarray, dst: np.ndarray, *, detections=None
     ) -> tuple[ViewTransformer, np.ndarray] | None:
+        """Pick the plain vs mirrored target for this frame's keypoints.
+
+        When per-frame player ``detections`` are supplied, candidate orientations are
+        ranked by a layout score (in-bounds players + team separation, penalized by
+        reprojection error) so the correct (non-mirrored) pitch is chosen even when the
+        mirrored fit has a marginally lower keypoint error. Without detections the rank
+        falls back to lowest reprojection error.
+        """
         length = float(self.config.length)
-        candidates: list[tuple[float, ViewTransformer, np.ndarray]] = []
+        candidates: list[tuple[float, float, ViewTransformer, np.ndarray]] = []
         for target in (dst, _flip_pitch_x_targets(dst, length)):
             try:
                 t = RansacViewTransformer(
@@ -276,28 +356,35 @@ class PitchHomographyTracker:
             except ValueError:
                 continue
             err = _mean_reproj_px(t, src, target)
-            candidates.append((err, t, target))
+            if detections is not None:
+                score = _score_homography_candidate(
+                    t, src, target, detections, max_reproj_px=self.max_reproj_px
+                )
+            else:
+                score = -err
+            candidates.append((score, err, t, target))
         if not candidates:
             return None
-        candidates.sort(key=lambda item: item[0])
-        for err, t, target in candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        for score, err, t, target in candidates:
             if err > self.max_reproj_px:
                 continue
             if self._orientation_anchor is None or _orientation_matches_anchor(
                 t, self._orientation_anchor, src
             ):
                 return t, target
-        # return best regardless of orientation if nothing passes the anchor check
-        _, t, target = candidates[0]
+        # return best-ranked candidate if nothing passes the anchor check
+        _score, _err, t, target = candidates[0]
         return t, target
 
     def update(
-        self, keypoints: sv.KeyPoints | None
+        self, keypoints: sv.KeyPoints | None, *, detections=None
     ) -> tuple[ViewTransformer | None, ViewTransformer | None]:
         """Return (speed_transformer, radar_transformer).
 
         speed_transformer is None when the frame fails the reprojection gate.
-        radar_transformer holds the last accepted H (orientation-locked).
+        radar_transformer holds the last accepted H (orientation-locked). When per-frame
+        player ``detections`` are passed they steer the plain-vs-mirror orientation pick.
         """
         if keypoints is None or keypoints.xy.shape[0] == 0:
             return None, self._locked
@@ -307,7 +394,7 @@ class PitchHomographyTracker:
             return None, self._locked
 
         src_now, dst_now = pair
-        fitted = self._fit_frame(src_now, dst_now)
+        fitted = self._fit_frame(src_now, dst_now, detections=detections)
         if fitted is None:
             return None, self._locked
 
@@ -342,8 +429,13 @@ def replay_tracker_transforms(
     max_reproj_px: float = SPEED_GATE_MAX_REPROJ_PX,
     ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
     config: SoccerPitchConfiguration = PITCH_CONFIG,
+    detections_by_frame: dict[int, sv.Detections] | None = None,
 ) -> tuple[dict[int, ViewTransformer | None], dict[int, ViewTransformer | None]]:
-    """Re-derive gated speed + radar homographies from already-detected keypoints."""
+    """Re-derive gated speed + radar homographies from already-detected keypoints.
+
+    When ``detections_by_frame`` is supplied, the per-frame player detections steer the
+    plain-vs-mirror orientation pick so the gated homography is not mirrored.
+    """
     tracker = PitchHomographyTracker(
         confidence=confidence,
         ransac_thresh=ransac_thresh,
@@ -354,7 +446,8 @@ def replay_tracker_transforms(
     radar_transforms: dict[int, ViewTransformer | None] = {}
     for frame_idx in sorted(int(fi) for fi in keypoints_by_frame):
         kps = keypoints_by_frame.get(frame_idx)
-        speed_t, radar_t = tracker.update(kps)
+        dets = detections_by_frame.get(frame_idx) if detections_by_frame is not None else None
+        speed_t, radar_t = tracker.update(kps, detections=dets)
         transforms[frame_idx] = speed_t
         radar_transforms[frame_idx] = radar_t
     return transforms, radar_transforms
@@ -420,8 +513,16 @@ def ensure_pitch_homography_maps(
     fps: float,
     max_frames: int | None = None,
     pitch_confidence: float = 0.9,
+    detections_by_frame: dict[int, sv.Detections] | None = None,
+    player_detector_fn: Callable[[np.ndarray], sv.Detections] | None = None,
 ) -> MetricContext:
-    """Run pitch keypoint detection on every frame and build gated homographies."""
+    """Run pitch keypoint detection on every frame and build gated homographies.
+
+    When per-frame player detections are available — either precomputed via
+    ``detections_by_frame`` or detected inline with ``player_detector_fn`` — they steer
+    the plain-vs-mirror orientation pick so the gated speed/radar homography (which also
+    feeds goalkeeper goal-distance assignment and distance) is not mirrored.
+    """
     tracker = PitchHomographyTracker(confidence=pitch_confidence)
     transforms: dict[int, ViewTransformer | None] = {}
     radar_transforms: dict[int, ViewTransformer | None] = {}
@@ -442,7 +543,12 @@ def ensure_pitch_homography_maps(
                 break
             kps = pitch_detector_fn(frame)
             keypoints_by_frame[frame_idx] = kps
-            speed_t, radar_t = tracker.update(kps)
+            dets = None
+            if detections_by_frame is not None:
+                dets = detections_by_frame.get(frame_idx)
+            elif player_detector_fn is not None:
+                dets = player_detector_fn(frame)
+            speed_t, radar_t = tracker.update(kps, detections=dets)
             transforms[frame_idx] = speed_t
             radar_transforms[frame_idx] = radar_t
     finally:

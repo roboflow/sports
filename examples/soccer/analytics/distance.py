@@ -104,6 +104,7 @@ def run_distance(args) -> None:
         fps=fps,
         max_frames=args.max_frames,
         pitch_confidence=0.9,
+        player_detector_fn=player_detector_fn,
     )
     speed_transforms = metric.speed_transforms
 
