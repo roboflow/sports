@@ -350,18 +350,21 @@ def apply_goalkeeper_frame(
 def collect_team_frames(
     source_video_path: str,
     *,
-    player_detector_fn,
+    player_detector_fn=None,
     team_classifier,
     tracker,
     needs_frame: bool,
     max_frames: int | None = None,
+    detections_by_frame: dict[int, sv.Detections] | None = None,
 ) -> list[tuple[int, sv.Detections]]:
     """One detect→track→classify pass over the clip → ``[(frame_idx, detections)]``.
 
     Outfield players are team-classified; goalkeepers stay TEAM_NONE here (they are
     resolved later by the goal-distance / centroid logic). ``tracker`` must be a fresh
     tracker of the same kind used in the render pass so tracker ids align (the existing
-    two-pass distance/focus code relies on this same determinism).
+    two-pass distance/focus code relies on this same determinism). When
+    ``detections_by_frame`` is supplied the raw detections come from it (cache) instead
+    of the detector.
     """
     import cv2
 
@@ -379,7 +382,12 @@ def collect_team_frames(
             frame_idx += 1
             if max_frames is not None and frame_idx > max_frames:
                 break
-            raw = player_detector_fn(frame)
+            if detections_by_frame is not None:
+                raw = detections_by_frame.get(frame_idx)
+                if raw is None:
+                    raw = sv.Detections.empty()
+            else:
+                raw = player_detector_fn(frame)
             players = raw[raw.class_id == PLAYER_CLASS_ID]
             gks = raw[raw.class_id == GOALKEEPER_CLASS_ID]
             trackable = (
@@ -415,7 +423,7 @@ def collect_team_frames(
 def compute_clip_locks(
     source_video_path: str,
     *,
-    player_detector_fn,
+    player_detector_fn=None,
     team_classifier,
     tracker,
     needs_frame: bool,
@@ -423,6 +431,7 @@ def compute_clip_locks(
     metric=None,
     pitch_confidence: float = 0.9,
     max_frames: int | None = None,
+    detections_by_frame: dict[int, sv.Detections] | None = None,
 ) -> tuple[dict[int, int], dict[int, int], tuple[int, int] | None]:
     """Clip-level stabilization from a single detect→track→classify pass.
 
@@ -441,6 +450,7 @@ def compute_clip_locks(
         tracker=tracker,
         needs_frame=needs_frame,
         max_frames=max_frames,
+        detections_by_frame=detections_by_frame,
     )
     team_lock = lock_teams_by_tracklet_majority(frames)
 

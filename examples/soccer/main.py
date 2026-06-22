@@ -500,6 +500,13 @@ if __name__ == '__main__':
                         choices=('goal_distance', 'centroid'),
                         help='(analytics) Goalkeeper team assignment: goal-distance (default) or '
                              'centroid. DIRECTION always uses centroid (no homography).')
+    parser.add_argument('--cache', dest='cache', action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help='(analytics) Cache per-frame detections + pitch keypoints on disk '
+                             'and reuse them on later runs (default on; use --no-cache to disable)')
+    parser.add_argument('--cache-dir', dest='cache_dir', default=None,
+                        help='(analytics) Directory for the on-disk cache '
+                             '(default: examples/soccer/data/cache)')
 
     args = parser.parse_args()
 

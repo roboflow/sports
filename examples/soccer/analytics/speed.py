@@ -10,8 +10,13 @@ import cv2
 import numpy as np
 import supervision as sv
 
+from analytics.cache import (
+    FrameCache,
+    build_or_load_detections,
+    build_or_load_keypoints,
+)
 from analytics.goalkeepers import apply_goalkeeper_frame, compute_clip_locks
-from analytics.homography import MetricContext, ensure_pitch_homography_maps
+from analytics.homography import MetricContext, build_metric_from_maps
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
@@ -43,34 +48,48 @@ def run_speed(args) -> None:
     """Render per-player Kalman ground-speed badges (m/s + km/h) via gap-filled H."""
     cap, fps, width, height = open_video(args.source_video_path)
 
+    player_model_id = getattr(args, "player_model_id", "football-players-detection-3zvbc/11")
+    pitch_model_id = getattr(args, "pitch_model_id", "football-field-detection-f07vi/15")
     player_detector_fn = create_player_detector(
         backend=args.player_detector,
         model_path=getattr(args, "player_model_path", None),
-        model_id=getattr(args, "player_model_id", "football-players-detection-3zvbc/11"),
+        model_id=player_model_id,
         device=args.device,
         api_key=getattr(args, "api_key", None),
     )
     pitch_detector_fn = create_pitch_keypoint_detector(
         backend=args.pitch_detector,
         model_path=getattr(args, "pitch_model_path", None),
-        model_id=getattr(args, "pitch_model_id", "football-field-detection-f07vi/15"),
+        model_id=pitch_model_id,
         device=args.device,
         api_key=getattr(args, "api_key", None),
     )
 
+    # On-disk cache: detections + pitch keypoints are computed once, reused after.
+    cache = FrameCache(
+        args.source_video_path,
+        cache_dir=getattr(args, "cache_dir", None),
+        enabled=getattr(args, "cache", True),
+        player_backend=args.player_detector,
+        player_model_id=player_model_id,
+        pitch_backend=args.pitch_detector,
+        pitch_model_id=pitch_model_id,
+    )
+    det_by_frame = build_or_load_detections(
+        args.source_video_path, player_detector_fn, cache, max_frames=args.max_frames
+    )
+    kp_by_frame = build_or_load_keypoints(
+        args.source_video_path, pitch_detector_fn, cache, max_frames=args.max_frames
+    )
+
     print("Fitting team classifier…")
     team_classifier = fit_team_classifier(
-        cap, player_detector_fn, device=args.device, max_frames=args.max_frames
+        cap, device=args.device, max_frames=args.max_frames, det_by_frame=det_by_frame
     )
 
     print("Building pitch homography maps…")
-    metric: MetricContext = ensure_pitch_homography_maps(
-        args.source_video_path,
-        pitch_detector_fn,
-        fps=fps,
-        max_frames=args.max_frames,
-        pitch_confidence=0.9,
-        player_detector_fn=player_detector_fn,
+    metric: MetricContext = build_metric_from_maps(
+        kp_by_frame, detections_by_frame=det_by_frame, pitch_confidence=0.9
     )
     gap_filled = metric.speed_transforms_gap_filled(0.9)
     # Single source of truth for the minimap: ungated keypoint-radar H (labelled
@@ -82,13 +101,13 @@ def run_speed(args) -> None:
     print("Building clip locks (team-id + goalkeeper)…")
     team_lock, gk_lock, locked_goal_defenders = compute_clip_locks(
         args.source_video_path,
-        player_detector_fn=player_detector_fn,
         team_classifier=team_classifier,
         tracker=create_player_tracker(fps, kind=args.tracker),
         needs_frame=needs_frame,
         gk_assignment=gk_assignment,
         metric=metric,
         max_frames=args.max_frames,
+        detections_by_frame=det_by_frame,
     )
 
     tracker = create_player_tracker(fps, kind=args.tracker)
@@ -107,7 +126,9 @@ def run_speed(args) -> None:
             if args.max_frames is not None and frame_idx > args.max_frames:
                 break
 
-            raw_dets = player_detector_fn(frame)
+            raw_dets = det_by_frame.get(frame_idx)
+            if raw_dets is None:
+                raw_dets = sv.Detections.empty()
             players = raw_dets[raw_dets.class_id == PLAYER_CLASS_ID]
             gks = raw_dets[raw_dets.class_id == GOALKEEPER_CLASS_ID]
 

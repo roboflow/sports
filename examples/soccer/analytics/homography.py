@@ -453,6 +453,35 @@ def replay_tracker_transforms(
     return transforms, radar_transforms
 
 
+def build_metric_from_maps(
+    keypoints_by_frame: dict[int, sv.KeyPoints | None],
+    *,
+    detections_by_frame: dict[int, sv.Detections] | None = None,
+    pitch_confidence: float = 0.9,
+    max_reproj_px: float = SPEED_GATE_MAX_REPROJ_PX,
+    ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
+    config: SoccerPitchConfiguration = PITCH_CONFIG,
+) -> "MetricContext":
+    """Build a :class:`MetricContext` from precomputed keypoints (and optional detections).
+
+    Used when keypoints come from the on-disk cache: the gated/radar homographies are
+    rebuilt from them (cheap), with per-frame detections steering the orientation pick.
+    """
+    transforms, radar_transforms = replay_tracker_transforms(
+        keypoints_by_frame,
+        confidence=pitch_confidence,
+        max_reproj_px=max_reproj_px,
+        ransac_thresh=ransac_thresh,
+        config=config,
+        detections_by_frame=detections_by_frame,
+    )
+    return MetricContext(
+        transforms=transforms,
+        radar_transforms=radar_transforms,
+        keypoints=keypoints_by_frame,
+    )
+
+
 # ---------------------------------------------------------------------------
 # MetricContext
 # ---------------------------------------------------------------------------

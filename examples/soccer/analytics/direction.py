@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import supervision as sv
 
+from analytics.cache import FrameCache, build_or_load_detections
 from analytics.goalkeepers import compute_clip_locks
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
@@ -34,20 +35,33 @@ def run_direction(args) -> None:
     """Render team-colored ellipses + image-space Kalman direction dots."""
     cap, fps, width, height = open_video(args.source_video_path)
 
+    player_model_id = getattr(args, "player_model_id", "football-players-detection-3zvbc/11")
     player_detector_fn = create_player_detector(
         backend=args.player_detector,
         model_path=getattr(args, "player_model_path", None),
-        model_id=getattr(args, "player_model_id", "football-players-detection-3zvbc/11"),
+        model_id=player_model_id,
         device=args.device,
         api_key=getattr(args, "api_key", None),
+    )
+
+    # On-disk cache for the per-frame player detections (skips the detector on reuse).
+    cache = FrameCache(
+        args.source_video_path,
+        cache_dir=getattr(args, "cache_dir", None),
+        enabled=getattr(args, "cache", True),
+        player_backend=args.player_detector,
+        player_model_id=player_model_id,
+    )
+    det_by_frame = build_or_load_detections(
+        args.source_video_path, player_detector_fn, cache, max_frames=args.max_frames
     )
 
     print("Fitting team classifier…")
     team_classifier = fit_team_classifier(
         cap,
-        player_detector_fn,
         device=args.device,
         max_frames=args.max_frames,
+        det_by_frame=det_by_frame,
     )
 
     needs_frame = args.tracker in ("botsort", "botsort_nocmc")
@@ -56,13 +70,13 @@ def run_direction(args) -> None:
     print("Building team-id stabilization lock…")
     team_lock, _, _ = compute_clip_locks(
         args.source_video_path,
-        player_detector_fn=player_detector_fn,
         team_classifier=team_classifier,
         tracker=create_player_tracker(fps, kind=args.tracker),
         needs_frame=needs_frame,
         gk_assignment="centroid",
         metric=None,
         max_frames=args.max_frames,
+        detections_by_frame=det_by_frame,
     )
 
     tracker = create_player_tracker(fps, kind=args.tracker)
@@ -80,7 +94,9 @@ def run_direction(args) -> None:
             if args.max_frames is not None and frame_idx > args.max_frames:
                 break
 
-            raw_dets = player_detector_fn(frame)
+            raw_dets = det_by_frame.get(frame_idx)
+            if raw_dets is None:
+                raw_dets = sv.Detections.empty()
 
             # ── track ──────────────────────────────────────────────────────
             players = raw_dets[raw_dets.class_id == PLAYER_CLASS_ID]
