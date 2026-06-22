@@ -54,7 +54,7 @@ from analytics.support import (
     track_id_color,
     TEAM_COLORS,
 )
-from analytics.teams import apply_team_lock
+from analytics.teams import apply_team_lock, relock_detection_teams
 from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
 from sports.configs.soccer import SoccerPitchConfiguration
 
@@ -339,6 +339,8 @@ def run_player_focus(args) -> None:
                 data=data,
             )
             dets = vel_smoother.smooth_detections(dets)
+            # Clip-level lock has the final say so class-flipping keepers stay one colour.
+            dets = relock_detection_teams(dets, team_lock)
 
             # ── update trace buffers (radar H → pitch cm) ──────────────────
             radar_h = radar_h_by_frame.get(frame_idx)

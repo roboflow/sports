@@ -28,7 +28,7 @@ from analytics.support import (
     open_video,
     resolve_goalkeepers_team_id,
 )
-from analytics.teams import apply_team_lock
+from analytics.teams import apply_team_lock, relock_detection_teams
 
 
 def run_direction(args) -> None:
@@ -148,6 +148,8 @@ def run_direction(args) -> None:
                 image=frame,
             )
             dets_with_vel = vel_smoother.smooth_detections(dets_with_vel)
+            # Clip-level lock has the final say so class-flipping keepers stay one colour.
+            dets_with_vel = relock_detection_teams(dets_with_vel, team_lock)
 
             # ── render (team-colored dots; no track-id numbers in direction) ──
             annotated = frame.copy()

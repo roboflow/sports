@@ -452,8 +452,12 @@ def compute_clip_locks(
         max_frames=max_frames,
         detections_by_frame=detections_by_frame,
     )
-    team_lock = lock_teams_by_tracklet_majority(frames)
 
+    # Resolve goalkeeper-row teams on the collected frames BEFORE the majority vote so
+    # that frames detected as a goalkeeper also contribute a team vote for their track.
+    # This is what lets a class-flipping keeper (player on some frames, goalkeeper on
+    # others) end up with one combined per-tracker_id team instead of flickering between
+    # the player-classifier team and the goalkeeper team.
     gk_lock: dict[int, int] = {}
     locked_goal_defenders: tuple[int, int] | None = None
     if gk_assignment == "goal_distance" and metric is not None:
@@ -466,6 +470,44 @@ def compute_clip_locks(
             keypoints_by_frame=metric.keypoints,
             locked_goal_defenders=locked_goal_defenders,
             pitch_confidence=pitch_confidence,
-            mutate=False,
+            mutate=True,
         )
+    else:
+        _fill_goalkeeper_teams_centroid(frames)
+
+    # One clip-level lock per tracker_id, combining player-classifier votes and the
+    # goalkeeper votes filled in above. Applied to every row of a track regardless of
+    # its per-frame class.
+    team_lock = lock_teams_by_tracklet_majority(frames)
+
+    # Keep the per-frame goalkeeper path in lock-step with the unified lock so the two
+    # never disagree for the same track.
+    for tid in list(gk_lock):
+        if tid in team_lock:
+            gk_lock[tid] = team_lock[tid]
+
     return team_lock, gk_lock, locked_goal_defenders
+
+
+def _fill_goalkeeper_teams_centroid(frames: list[tuple[int, sv.Detections]]) -> None:
+    """Fill goalkeeper-row ``data['team']`` per frame via the team-centroid rule (in place).
+
+    Used for the ``centroid`` assignment so that goalkeeper-detected frames still vote in
+    the per-tracker_id team lock; without this a keeper whose class flips would only be
+    voted on its player-detected frames.
+    """
+    from analytics.support import resolve_goalkeepers_team_id
+
+    for _, dets in frames:
+        if dets.data is None or len(dets) == 0 or dets.tracker_id is None:
+            continue
+        team = np.asarray(dets.data.get("team", np.full(len(dets), TEAM_NONE)), dtype=int)
+        gk_mask = dets.class_id == GOALKEEPER_CLASS_ID
+        pl_mask = dets.class_id == PLAYER_CLASS_ID
+        if not gk_mask.any():
+            continue
+        if not ((team[pl_mask] == 0).any() and (team[pl_mask] == 1).any()):
+            continue
+        gk_teams = resolve_goalkeepers_team_id(dets[pl_mask], team[pl_mask], dets[gk_mask])
+        team[gk_mask] = gk_teams
+        dets.data["team"] = team

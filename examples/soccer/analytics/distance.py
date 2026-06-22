@@ -36,7 +36,7 @@ from analytics.support import (
     open_video,
     resolve_goalkeepers_team_id,
 )
-from analytics.teams import apply_team_lock
+from analytics.teams import apply_team_lock, relock_detection_teams
 
 
 def _build_end_card(
@@ -236,6 +236,8 @@ def run_distance(args) -> None:
                 )
             dets = attach_kalman_velocity(tracked, tracker_pass2, needs_frame=needs_frame, image=frame)
             dets = vel_smoother.smooth_detections(dets)
+            # Clip-level lock has the final say so class-flipping keepers stay one colour.
+            dets = relock_detection_teams(dets, team_lock)
 
             # cumulative distance per tid at this frame
             dist_by_tid: dict[int, float] = {}

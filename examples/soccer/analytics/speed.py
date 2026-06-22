@@ -41,7 +41,7 @@ from analytics.support import (
     resolve_goalkeepers_team_id,
     MS_TO_KMH,
 )
-from analytics.teams import apply_team_lock
+from analytics.teams import apply_team_lock, relock_detection_teams
 
 
 def run_speed(args) -> None:
@@ -176,6 +176,8 @@ def run_speed(args) -> None:
             # ── Kalman velocity ────────────────────────────────────────────
             dets = attach_kalman_velocity(tracked, tracker, needs_frame=needs_frame, image=frame)
             dets = vel_smoother.smooth_detections(dets)
+            # Clip-level lock has the final say so class-flipping keepers stay one colour.
+            dets = relock_detection_teams(dets, team_lock)
 
             # ── per-player Kalman ground speed (gap-filled H) ──────────────
             transformer = gap_filled.get(frame_idx)
