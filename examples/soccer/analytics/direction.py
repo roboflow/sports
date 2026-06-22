@@ -36,13 +36,15 @@ def run_direction(args) -> None:
     cap, fps, width, height = open_video(args.source_video_path)
 
     player_model_id = getattr(args, "player_model_id", "football-players-detection-3zvbc/11")
-    player_detector_fn = create_player_detector(
-        backend=args.player_detector,
-        model_path=getattr(args, "player_model_path", None),
-        model_id=player_model_id,
-        device=args.device,
-        api_key=getattr(args, "api_key", None),
-    )
+
+    def _make_player_detector():
+        return create_player_detector(
+            backend=args.player_detector,
+            model_path=getattr(args, "player_model_path", None),
+            model_id=player_model_id,
+            device=args.device,
+            api_key=getattr(args, "api_key", None),
+        )
 
     # On-disk cache for the per-frame player detections (skips the detector on reuse).
     cache = FrameCache(
@@ -53,7 +55,7 @@ def run_direction(args) -> None:
         player_model_id=player_model_id,
     )
     det_by_frame = build_or_load_detections(
-        args.source_video_path, player_detector_fn, cache, max_frames=args.max_frames
+        args.source_video_path, _make_player_detector, cache, max_frames=args.max_frames
     )
 
     print("Fitting team classifier…")

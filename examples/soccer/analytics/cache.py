@@ -224,15 +224,16 @@ class FrameCache:
 
 def build_or_load_detections(
     source_video_path: str,
-    player_detector_fn,
+    detector_factory,
     cache: FrameCache,
     *,
     max_frames: int | None = None,
 ) -> dict[int, sv.Detections]:
     """Return ``{frame_idx: detections}`` for the whole clip, using the cache when possible.
 
-    On a cache hit the detector is not run at all; on a miss the detector runs once over
-    the clip and the result is written to the cache for later runs.
+    ``detector_factory`` is a zero-arg callable returning the detector function; it is
+    only invoked on a cache miss, so a cache hit never loads the detector model. On a
+    miss the detector runs once over the clip and the result is written for later runs.
     """
     import cv2
 
@@ -242,6 +243,7 @@ def build_or_load_detections(
         return cached
 
     print("Computing player detections (cache miss)…")
+    player_detector_fn = detector_factory()
     det_by_frame: dict[int, sv.Detections] = {}
     cap = cv2.VideoCapture(source_video_path)
     if not cap.isOpened():
@@ -264,12 +266,16 @@ def build_or_load_detections(
 
 def build_or_load_keypoints(
     source_video_path: str,
-    pitch_detector_fn,
+    detector_factory,
     cache: FrameCache,
     *,
     max_frames: int | None = None,
 ) -> dict[int, sv.KeyPoints]:
-    """Return ``{frame_idx: keypoints}`` for the whole clip, using the cache when possible."""
+    """Return ``{frame_idx: keypoints}`` for the whole clip, using the cache when possible.
+
+    ``detector_factory`` is a zero-arg callable returning the keypoint detector; it is
+    only invoked on a cache miss, so a cache hit never loads the pitch detector model.
+    """
     import cv2
 
     cached = cache.load_keypoints(max_frames)
@@ -278,6 +284,7 @@ def build_or_load_keypoints(
         return cached
 
     print("Computing pitch keypoints (cache miss)…")
+    pitch_detector_fn = detector_factory()
     kp_by_frame: dict[int, sv.KeyPoints] = {}
     cap = cv2.VideoCapture(source_video_path)
     if not cap.isOpened():
