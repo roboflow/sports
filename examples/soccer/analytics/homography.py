@@ -327,34 +327,29 @@ def homography_from_keypoints_radar(
 
 
 # ---------------------------------------------------------------------------
-# Minimap homography selection (stable, orientation-locked)
+# Minimap homography selection (no-mirror, stabilized)
 # ---------------------------------------------------------------------------
+# The visible radar (minimap, per-track traces and live dots) reads a single shared
+# homography per frame that is fitted to the PLAIN pitch vertices only — no plain-vs-
+# mirror candidates — so it physically cannot flip. The gated tracker H keeps its
+# mirror + layout scoring for the metrics; only the visible radar uses this no-mirror
+# map. Stability (the reason the metrics H exists) is recovered here with the same
+# frame-to-frame jump rejection plus an optional small EMA blend of the matrix.
 
-def _first_locked_radar_transform(
-    radar_transforms: dict[int, ViewTransformer | None],
-) -> ViewTransformer | None:
-    """First non-None radar H in frame order — the upright orientation anchor."""
-    for frame_idx in sorted(int(fi) for fi in radar_transforms):
-        transformer = radar_transforms[frame_idx]
-        if transformer is not None:
-            return transformer
-    return None
+# EMA weight on the new frame's matrix when blending the no-mirror minimap H across
+# frames (the remainder weights the held matrix). Small enough to smooth residual
+# jitter without lagging real camera motion.
+RADAR_MINIMAP_EMA_ALPHA = 0.6
 
 
-def _orientation_locked_keypoint_radar(
+def _no_mirror_radar_correspondences(
     keypoints: sv.KeyPoints | None,
-    anchor: ViewTransformer | None,
     *,
     config: SoccerPitchConfiguration = PITCH_CONFIG,
     confidence: float = 0.9,
     min_keypoints: int = DISPLAY_MIN_KEYPOINTS,
-) -> ViewTransformer | None:
-    """Ungated per-frame keypoint H, flipped to match the locked pitch orientation.
-
-    Anti-flip fallback for radar frames the gated tracker never locked: fits the plain
-    and mirrored keypoint homographies and keeps whichever agrees with the orientation
-    anchor, so a stray fallback frame cannot mirror the pitch on the minimap.
-    """
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Accepted (image_src, plain pitch_dst) keypoint correspondences for the minimap H."""
     if keypoints is None or keypoints.xy.shape[0] == 0:
         return None
     n = pitch_vertex_count(config)
@@ -364,69 +359,83 @@ def _orientation_locked_keypoint_radar(
         return None
     src = xy[mask].astype(np.float32)
     dst = np.array(config.vertices, dtype=np.float32)[mask]
-    fallback: ViewTransformer | None = None
-    for target in (dst, _flip_pitch_x_targets(dst, float(config.length))):
-        try:
-            candidate = RansacViewTransformer(source=src, target=target, use_ransac=False)
-        except ValueError:
-            continue
-        if anchor is None or _orientation_matches_anchor(candidate, anchor, src):
-            return candidate
-        fallback = fallback or candidate
-    return fallback
+    return src, dst
 
 
-def radar_homography_for_frame(
-    metric: "MetricContext",
-    frame_idx: int,
-    *,
-    confidence: float = 0.9,
-    anchor: ViewTransformer | None = None,
-) -> ViewTransformer | None:
-    """Pick the per-frame minimap/trace/live-dot homography (stable and upright).
+def _fit_no_mirror_radar(src: np.ndarray, dst: np.ndarray) -> ViewTransformer | None:
+    """Fit the minimap H to plain pitch vertices only (no mirror candidate)."""
+    try:
+        return RansacViewTransformer(source=src, target=dst, use_ransac=False)
+    except ValueError:
+        return None
 
-    Resolution order:
-      1. the gated, orientation-locked, hold-on-fail radar H (``radar_transforms``),
-         which is both stable across frames and oriented correctly via the
-         layout-scored candidate selection;
-      2. an orientation-locked ungated keypoint H as an anti-flip fallback on frames
-         the gate never locked;
-      3. the raw ungated keypoint H as a last resort.
 
-    Traces and live dots must read from this single source per frame so they never
-    drift onto different coordinate frames.
-    """
-    frame_idx = int(frame_idx)
-    gated = metric.radar_transforms.get(frame_idx)
-    if gated is not None:
-        return gated
-    if anchor is None:
-        anchor = _first_locked_radar_transform(metric.radar_transforms)
-    keypoints = (metric.keypoints or {}).get(frame_idx)
-    locked = _orientation_locked_keypoint_radar(keypoints, anchor, confidence=confidence)
-    if locked is not None:
-        return locked
-    return metric.keypoint_radar_transforms(confidence).get(frame_idx)
+def _transformer_with_matrix(m: np.ndarray) -> ViewTransformer:
+    """Wrap a homography matrix in a ViewTransformer (transform_points only reads ``m``)."""
+    transformer = RansacViewTransformer.__new__(RansacViewTransformer)
+    transformer.m = np.asarray(m, dtype=np.float64)
+    return transformer
+
+
+def _ema_blend_transformer(
+    prev: ViewTransformer, candidate: ViewTransformer, alpha: float
+) -> ViewTransformer:
+    """EMA-blend two homography matrices (both normalised so the scale term stays 1)."""
+    m = (
+        alpha * np.asarray(candidate.m, dtype=np.float64)
+        + (1.0 - alpha) * np.asarray(prev.m, dtype=np.float64)
+    )
+    if abs(m[2, 2]) > 1e-12:
+        m = m / m[2, 2]
+    return _transformer_with_matrix(m)
 
 
 def build_radar_homography_map(
     metric: "MetricContext",
     *,
     confidence: float = 0.9,
+    max_jump_cm: float = SPEED_GATE_MAX_JUMP_CM,
+    ema_alpha: float = RADAR_MINIMAP_EMA_ALPHA,
 ) -> dict[int, ViewTransformer | None]:
-    """Resolve :func:`radar_homography_for_frame` for every known frame, once.
+    """No-mirror, stabilized minimap/trace/live-dot homography for every known frame.
 
-    The orientation anchor is computed a single time so the motion features read the
-    minimap homography (traces and live dots alike) from one shared, frame-keyed map.
+    Fits each frame's homography to the plain pitch vertices only (no plain-vs-mirror
+    candidates), so the visible radar can never flip. Stability is recovered without the
+    gated tracker's mirror branch by:
+      1. holding the previous accepted matrix when a new fit would teleport the in-view
+         points beyond ``max_jump_cm`` (the same jump rejection used for the gated H),
+         applied only between consecutive accepts so post-gap recovery is not blocked;
+      2. an optional small EMA blend of the matrix across frames for extra smoothness.
+    Frames without enough keypoints hold the previous matrix. Metrics keep the gated,
+    mirror-capable ``radar_transforms``; only the visible radar uses this map.
     """
-    anchor = _first_locked_radar_transform(metric.radar_transforms)
-    frames = set(metric.radar_transforms) | set(metric.keypoints or {})
-    return {
-        int(fi): radar_homography_for_frame(
-            metric, int(fi), confidence=confidence, anchor=anchor
+    keypoints_by_frame = metric.keypoints or {}
+    out: dict[int, ViewTransformer | None] = {}
+    prev: ViewTransformer | None = None
+    last_was_accept = False
+    for frame_idx in sorted(int(fi) for fi in keypoints_by_frame):
+        pair = _no_mirror_radar_correspondences(
+            keypoints_by_frame.get(frame_idx), confidence=confidence
         )
-        for fi in frames
-    }
+        candidate = _fit_no_mirror_radar(*pair) if pair is not None else None
+        if candidate is None:
+            out[frame_idx] = prev
+            last_was_accept = False
+            continue
+        if (
+            prev is not None
+            and last_was_accept
+            and _homography_jump_cm(prev, candidate, pair[0]) > max_jump_cm
+        ):
+            out[frame_idx] = prev
+            last_was_accept = False
+            continue
+        if prev is not None and 0.0 < ema_alpha < 1.0:
+            candidate = _ema_blend_transformer(prev, candidate, ema_alpha)
+        prev = candidate
+        out[frame_idx] = candidate
+        last_was_accept = True
+    return out
 
 
 # ---------------------------------------------------------------------------
