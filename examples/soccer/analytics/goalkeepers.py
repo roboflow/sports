@@ -20,7 +20,6 @@ import supervision as sv
 
 from sports.configs.soccer import SoccerPitchConfiguration
 
-from analytics.homography import homography_from_keypoints_radar
 from analytics.player_motion import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
@@ -202,24 +201,22 @@ def _goal_warmup_ready(
 
 def warmup_goal_defenders_radar(
     frames_with_dets,
-    keypoints_by_frame: dict[int, sv.KeyPoints | None] | None,
+    transforms: dict[int, object] | None,
     *,
-    confidence: float = 0.9,
     sample_step: int = 8,
 ) -> tuple[int, int] | None:
     """Lock left/right defending teams using the same sports-radar H as the minimap.
 
     Votes the defensive-block goal-side mapping on sampled frames and returns the majority.
+    ``transforms`` should be the memoized ``MetricContext.keypoint_radar_transforms`` map.
     """
-    if not keypoints_by_frame:
+    if not transforms:
         return None
     votes: dict[tuple[int, int], int] = {}
     for frame_idx, dets in frames_with_dets:
         if int(frame_idx) % sample_step != 0:
             continue
-        transformer = homography_from_keypoints_radar(
-            keypoints_by_frame.get(int(frame_idx)), confidence=confidence
-        )
+        transformer = transforms.get(int(frame_idx))
         if transformer is None:
             continue
         pmask = player_mask(dets)
@@ -243,43 +240,73 @@ def warmup_goal_defenders_radar(
 # stabilize_goalkeeper_teams — clip-level GK team lock per tracklet
 # ---------------------------------------------------------------------------
 
+def _sample_stabilize_frame_indices(
+    frames: list[tuple[int, sv.Detections]],
+    *,
+    max_warmup_frames: int,
+    max_sample_frames: int,
+) -> set[int]:
+    """First ``max_warmup_frames`` clip entries, evenly subsampled to at most ``max_sample_frames``."""
+    warmup = frames[:max_warmup_frames]
+    if not warmup:
+        return set()
+    if len(warmup) <= max_sample_frames:
+        return {int(fi) for fi, _ in warmup}
+    sample_idxs = np.linspace(0, len(warmup) - 1, max_sample_frames, dtype=int)
+    return {int(warmup[i][0]) for i in np.unique(sample_idxs)}
+
+
 def stabilize_goalkeeper_teams(
     frames: list[tuple[int, sv.Detections]],
     *,
     transforms: dict[int, object] | None = None,
-    keypoints_by_frame: dict[int, object] | None = None,
     locked_goal_defenders: tuple[int, int] | None = None,
-    pitch_confidence: float = 0.9,
-    min_gk_frames: int = 10,
+    max_warmup_frames: int = 30,
+    max_sample_frames: int = 10,
+    min_gk_frames: int = 3,
     mutate: bool = True,
 ) -> dict[int, int]:
     """Lock each goalkeeper tracklet to one defending team over the whole clip.
 
-    1. Identify tracklets ever detected as a goalkeeper.
-    2. Average pitch X from the same per-frame radar H used on the minimap.
+    1. Identify tracklets ever detected as a goalkeeper in a small early-clip sample.
+    2. Average pitch X from precomputed per-frame radar H (``transforms``).
     3. Assign the team defending the nearer goal for the whole tracklet.
 
+    Only the first ``max_warmup_frames`` entries of ``frames`` are considered, subsampled
+    evenly to at most ``max_sample_frames`` indices (linspace over that prefix). This is
+    enough for clip-level GK side lock via avg pitch X vs midline.
+
+    ``transforms`` should be ``MetricContext.keypoint_radar_transforms(confidence)`` — a
+    memoized map of ``ViewTransformer`` per frame. No homography is fit inside this loop.
+
+    ``min_gk_frames`` counts goalkeeper-class appearances **within the sample only** (default
+    3 ≈ 30% of 10 sampled frames; raise toward ``max_sample_frames`` for stricter locks).
+
     Returns ``{tracker_id: team}`` for every stabilized goalkeeper tracklet. When
-    ``mutate`` is True, also patches ``data['team']`` on the supplied frames in place.
+    ``mutate`` is True, also patches ``data['team']`` on all supplied frames in place.
     """
     if locked_goal_defenders:
         left_def, right_def = locked_goal_defenders
     else:
         left_def, right_def = TEAM_LEFT, TEAM_RIGHT
 
+    sample_frame_ids = _sample_stabilize_frame_indices(
+        frames,
+        max_warmup_frames=max_warmup_frames,
+        max_sample_frames=max_sample_frames,
+    )
+    if not sample_frame_ids or not transforms:
+        return {}
+
     track_positions: dict[int, list[float]] = {}
     gk_frame_counts: dict[int, int] = {}
 
     for frame_idx, dets in frames:
+        if int(frame_idx) not in sample_frame_ids:
+            continue
         if dets.tracker_id is None:
             continue
-        t = None
-        if keypoints_by_frame is not None:
-            t = homography_from_keypoints_radar(
-                keypoints_by_frame.get(int(frame_idx)), confidence=pitch_confidence
-            )
-        if t is None and transforms is not None:
-            t = transforms.get(int(frame_idx))
+        t = transforms.get(int(frame_idx))
         if t is None:
             continue
 
@@ -506,15 +533,14 @@ def derive_clip_locks(
     gk_lock: dict[int, int] = {}
     locked_goal_defenders: tuple[int, int] | None = None
     if gk_assignment == "goal_distance" and metric is not None:
+        radar_transforms = metric.keypoint_radar_transforms(pitch_confidence)
         locked_goal_defenders = warmup_goal_defenders_radar(
-            frames, metric.keypoints, confidence=pitch_confidence
+            frames, radar_transforms
         )
         gk_lock = stabilize_goalkeeper_teams(
             frames,
-            transforms=metric.radar_transforms,
-            keypoints_by_frame=metric.keypoints,
+            transforms=radar_transforms,
             locked_goal_defenders=locked_goal_defenders,
-            pitch_confidence=pitch_confidence,
             mutate=True,
         )
     else:
