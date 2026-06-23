@@ -930,6 +930,64 @@ def draw_speed_legend(frame: np.ndarray) -> None:
     )
 
 
+# ── joystick-dot geometry (ported from world_cup_projects common/visual.py) ──
+# The dot is sized off the player's bbox width and reaches proportionally to the
+# drawn ground ellipse edge (scaled by a speed "stick"), so it stays in proportion
+# with the ellipse at every box scale instead of using a fixed radius / fixed arm.
+JOYSTICK_MIN_SPEED_PX = 0.5
+JOYSTICK_MAX_SPEED_PX = 4.0
+JOYSTICK_ELLIPSE_THICKNESS = 2.0  # matches draw_team_ellipses stroke
+
+
+def _dot_radius_for_ellipse(semi_axis_a: float) -> int:
+    """Scale the dot with bbox width (the ellipse horizontal semi-axis ``a = x2-x1``)."""
+    return int(np.clip(round(semi_axis_a * 0.13), 3, 8))
+
+
+def _ellipse_extent_in_direction(a: float, b: float, ux: float, uy: float) -> float:
+    """Distance from ellipse center to its edge along a unit direction."""
+    denom = (b * ux) ** 2 + (a * uy) ** 2
+    if denom < 1e-12:
+        return float(min(a, b))
+    return float((a * b) / np.sqrt(denom))
+
+
+def _joystick_dot_reach(
+    stick: float,
+    a: float,
+    b: float,
+    ux: float,
+    uy: float,
+    *,
+    dot_radius: float,
+    ellipse_thickness: float = JOYSTICK_ELLIPSE_THICKNESS,
+) -> float:
+    """Center distance for a joystick dot tied to the drawn ellipse.
+
+    At full deflection (``stick == 1``) the dot center sits on the ellipse edge plus
+    half the stroke and its own radius, so the filled circle rides the outer edge.
+    """
+    edge = _ellipse_extent_in_direction(a, b, ux, uy)
+    outer = edge + 0.5 * ellipse_thickness + dot_radius
+    return float(stick) * outer
+
+
+def kalman_speed_stick(
+    speed_px: float,
+    *,
+    min_speed_px: float = JOYSTICK_MIN_SPEED_PX,
+    max_speed_px: float = JOYSTICK_MAX_SPEED_PX,
+) -> float | None:
+    """Map Kalman speed (px/frame) to a joystick deflection in [0, 1] (sqrt curve)."""
+    if not np.isfinite(speed_px) or speed_px < min_speed_px:
+        return None
+    if max_speed_px <= min_speed_px:
+        return 1.0
+    linear = float(np.clip((speed_px - min_speed_px) / (max_speed_px - min_speed_px), 0.0, 1.0))
+    # Slight curve so typical jogging reads closer to the ellipse edge.
+    return float(np.sqrt(linear))
+
+
 def draw_joystick_dots(
     frame: np.ndarray,
     detections: sv.Detections,
@@ -945,7 +1003,13 @@ def draw_joystick_dots(
 
     The dot color matches the player's team; referees / unassigned rows get no dot.
     When ``show_speed`` and ``speed_by_tid`` are given, a radial m/s badge rides the dot.
+
+    Sizing matches world_cup ``draw_kalman_joystick_dots``: the dot radius scales with
+    bbox width and, driven by a speed "stick", reaches to the ground-ellipse edge at
+    full deflection. ``dot_radius`` / ``arm_scale`` are retained for call-site
+    compatibility but are no longer used (the dot is sized per player).
     """
+    del dot_radius, arm_scale  # superseded by per-player ellipse-relative sizing
     if len(detections) == 0 or detections.data is None:
         return
     kf_vx = detections.data.get("kf_vx")
@@ -969,24 +1033,29 @@ def draw_joystick_dots(
         if speed < DEFAULT_MIN_SPEED_PX:
             continue
         x1, y1, x2, y2 = xyxy
-        cx = (x1 + x2) / 2.0
+        cx = (float(x1) + float(x2)) / 2.0
         cy = float(y2)
-        rx = max((x2 - x1) / 2.0, 1.0)
-        arm = rx * arm_scale
-        px = cx + (vx / speed) * arm
-        py = cy + (vy / speed) * arm * 0.35
+        # Ellipse semi-axes match draw_team_ellipses: a = full bbox width, b = 0.35a.
+        a = float(x2 - x1)
+        b = 0.35 * a
+        radius = _dot_radius_for_ellipse(a)
+        px, py = cx, cy
+        stick = kalman_speed_stick(speed)
+        if stick is not None:
+            ux, uy = vx / speed, vy / speed
+            reach = _joystick_dot_reach(stick, a, b, ux, uy, dot_radius=float(radius))
+            px, py = cx + ux * reach, cy + uy * reach
         tid = int(tids[i])
         if joystick_smoother is not None:
             px, py = joystick_smoother.smooth(tid, cx, cy, px, py)
         ipx, ipy = int(round(px)), int(round(py))
-        cv2.circle(frame, (ipx, ipy), dot_radius, color, -1, cv2.LINE_AA)
-        cv2.circle(frame, (ipx, ipy), dot_radius, (20, 20, 20), 1, cv2.LINE_AA)
+        cv2.circle(frame, (ipx, ipy), radius, color, -1, cv2.LINE_AA)
         if show_speed and speed_by_tid is not None and tid >= 0:
             spd = speed_by_tid.get(tid)
             if spd is not None and spd >= min_speed_ms:
                 draw_speed_badge(
                     frame, float(spd), cx, cy, ipx, ipy, vx, vy,
-                    team_bgr=color, dot_radius=dot_radius,
+                    team_bgr=color, dot_radius=radius,
                 )
 
 
@@ -1171,14 +1240,28 @@ def draw_trace_on_minimap(
     padding: int = 30,
     scale: float = 0.065,
     thickness: int = 2,
+    smooth_window: int | None = None,
+    margin_cm: float = 80.0,
 ) -> np.ndarray:
     """Draw a pitch-cm polyline trace on a minimap image.
 
-    The trace is drawn from the raw per-frame pitch-cm positions (no smoothing or
-    outlier filtering) so the visible radar matches the per-frame keypoint homography
-    one-to-one; only NaN points are skipped.
+    Cleans the *visible* trace only — this does not touch the minimap homography
+    (the no-mirror keypoint H stays as-is): off-pitch homography spikes are dropped
+    via :func:`valid_pitch_cm` (``margin_cm`` ~80) and the remaining points are
+    median-smoothed over a small odd window (``HOMOGRAPHY_PITCH_SMOOTH``) so the
+    radar polyline reads cleanly instead of jittering on raw per-frame warps. NaN
+    points are skipped.
     """
+    from analytics.homography import valid_pitch_cm
+
+    window = HOMOGRAPHY_PITCH_SMOOTH if smooth_window is None else smooth_window
     trace_cm = np.asarray(trace_cm, dtype=np.float64)
+    if trace_cm.ndim == 2 and len(trace_cm):
+        # Drop off-pitch warps so spurious spikes never reach the polyline.
+        on_pitch = valid_pitch_cm(trace_cm, margin_cm=margin_cm)
+        trace_cm = trace_cm[on_pitch]
+        # Median-smooth the kept points (purely cosmetic; homography is unchanged).
+        trace_cm = _smooth_trajectory(trace_cm, window)
     pts: list[tuple[int, int]] = []
     for pt in trace_cm:
         if np.any(np.isnan(pt)):
