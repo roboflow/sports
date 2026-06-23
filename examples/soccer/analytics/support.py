@@ -930,10 +930,10 @@ def draw_speed_legend(frame: np.ndarray) -> None:
     )
 
 
-# ── joystick-dot geometry (ported from world_cup_projects common/visual.py) ──
-# The dot is sized off the player's bbox width and reaches proportionally to the
-# drawn ground ellipse edge (scaled by a speed "stick"), so it stays in proportion
-# with the ellipse at every box scale instead of using a fixed radius / fixed arm.
+# ── joystick-dot geometry ──
+# Dot radius scales with bbox width; a speed "stick" drives how far the dot reaches
+# toward the drawn ground-ellipse edge, keeping dot size and deflection proportional
+# to the player bbox at every scale (instead of a fixed radius / fixed arm).
 JOYSTICK_MIN_SPEED_PX = 0.5
 JOYSTICK_MAX_SPEED_PX = 4.0
 JOYSTICK_ELLIPSE_THICKNESS = 2.0  # matches draw_team_ellipses stroke
@@ -1004,10 +1004,10 @@ def draw_joystick_dots(
     The dot color matches the player's team; referees / unassigned rows get no dot.
     When ``show_speed`` and ``speed_by_tid`` are given, a radial m/s badge rides the dot.
 
-    Sizing matches world_cup ``draw_kalman_joystick_dots``: the dot radius scales with
-    bbox width and, driven by a speed "stick", reaches to the ground-ellipse edge at
-    full deflection. ``dot_radius`` / ``arm_scale`` are retained for call-site
-    compatibility but are no longer used (the dot is sized per player).
+    Dot radius scales with bbox width; a speed "stick" drives how far the dot reaches
+    toward the ground-ellipse edge at full deflection. ``dot_radius`` / ``arm_scale`` are
+    retained for call-site compatibility but are no longer used (the dot is sized per
+    player).
     """
     del dot_radius, arm_scale  # superseded by per-player ellipse-relative sizing
     if len(detections) == 0 or detections.data is None:

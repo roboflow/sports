@@ -6,9 +6,7 @@ ViewTransformer, draw_pitch, or draw_points_on_pitch.
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import cv2
@@ -16,7 +14,6 @@ import numpy as np
 import numpy.typing as npt
 import supervision as sv
 
-from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
 from sports.common.view import ViewTransformer
 from sports.configs.soccer import SoccerPitchConfiguration
 

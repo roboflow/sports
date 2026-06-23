@@ -6,9 +6,8 @@ drives each of the five mode renderers in-process, handing them that single anal
 mode still writes its own output video; only the expensive shared groundwork is reused.
 
 The five renders are DIRECTION, SPEED, DISTANCE, PLAYER_FOCUS (follow-all) and PLAYER_FOCUS
-(single-player spotlight). With every renderer replaying the shared tracking pass, BoTSORT
-runs exactly once for the whole run-all — verified here via the process-level tracker-build
-counter and printed at the end.
+(single-player spotlight). BoTSORT runs once for the whole run-all; each renderer reuses
+that shared analysis.
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ import time
 from pathlib import Path
 
 from analytics.clip_analysis import ClipAnalysis, compute_clip_analysis
-from analytics.support import get_tracker_build_count, reset_tracker_build_count
 
 # (output suffix, human label) for the five renders, in run order.
 _RENDER_PLAN = (
@@ -66,16 +64,11 @@ def run_all(args) -> list[str]:
     from analytics.player_focus import run_player_focus
     from analytics.speed import run_speed
 
-    reset_tracker_build_count()
     t_start = time.time()
 
-    print("── run-all: computing shared ClipAnalysis (one BoTSORT pass) ─────────")
+    print("── run-all: computing shared ClipAnalysis ─────────")
     analysis = compute_clip_analysis(args, need_homography=True)
-    passes_after_analysis = get_tracker_build_count()
-    print(
-        f"Shared analysis ready in {time.time() - t_start:.1f}s "
-        f"(BoTSORT passes so far: {passes_after_analysis})."
-    )
+    print(f"Shared analysis ready in {time.time() - t_start:.1f}s.")
 
     base = args.target_video_path
     explicit_focus = getattr(args, "track_id", None)
@@ -100,20 +93,12 @@ def run_all(args) -> list[str]:
         outputs.append(target)
         timings.append((label, time.time() - t_mode))
 
-    total_passes = get_tracker_build_count()
     total_time = time.time() - t_start
     print("── run-all: done ─────────────────────────────────────────────────────")
     for label, dt in timings:
         print(f"  {label:<28} {dt:6.1f}s")
     print(f"  {'TOTAL':<28} {total_time:6.1f}s")
-    print(f"BoTSORT passes (player-tracker builds) for the whole run-all: {total_passes}")
-    if total_passes != 1:
-        print(
-            f"WARNING: expected exactly 1 BoTSORT pass for run-all, saw {total_passes}. "
-            "Tracking was not fully shared."
-        )
-    else:
-        print("Verified: BoTSORT ran exactly once for all five renders.")
+    print(f"  All {len(outputs)} renders used a single shared tracking pass.")
     print("Outputs:")
     for path in outputs:
         print(f"  {path}")

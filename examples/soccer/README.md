@@ -110,6 +110,92 @@ on the field.
 
   https://github.com/user-attachments/assets/263b4cd0-2185-4ed3-9be2-cf4d8f5bfa67
 
+### player-motion analytics
+
+Four additional modes overlay player speed, direction, distance, and spotlight
+tracking on the broadcast view. They share one tracking pass per run and reuse
+the same detectors as the modes above (YOLO by default).
+
+- `DIRECTION` — Team-colored ground ellipses with a velocity joystick dot on each
+  player (centroid-based; no pitch homography).
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/renders/2e57b9_0-direction.mp4 \
+  --device mps --mode DIRECTION
+  ```
+
+- `SPEED` — Same overlay with radial speed badges (m/s) from pitch-space Kalman
+  velocity.
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/renders/2e57b9_0-speed.mp4 \
+  --device mps --mode SPEED
+  ```
+
+- `DISTANCE` — Cumulative distance traveled per player (m), shown on the overlay.
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/renders/2e57b9_0-distance.mp4 \
+  --device mps --mode DISTANCE
+  ```
+
+- `PLAYER_FOCUS` — Spotlight one tracked player (or all players when
+  `--track-id` is omitted).
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/renders/2e57b9_0-focus.mp4 \
+  --device mps --mode PLAYER_FOCUS --track-id 7
+  ```
+
+- `ALL` — Run-all orchestrator: computes shared tracking, homography, and
+  kinematics once, then writes all five analytics renders (direction, speed,
+  distance, follow-all focus, and a single-player spotlight).
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/renders/2e57b9_0.mp4 \
+  --device mps --mode ALL
+  ```
+
+#### analytics CLI flags
+
+These flags apply to `DIRECTION`, `SPEED`, `DISTANCE`, `PLAYER_FOCUS`, and
+`ALL` (ignored by the original six modes):
+
+| flag | default | purpose |
+|:-----|:--------|:--------|
+| `--tracker` | `botsort` | Tracker backend: `botsort`, `bytetrack`, or `botsort_nocmc` |
+| `--player-detector` | `yolo` | Player detection: `yolo` or `inference` (Roboflow) |
+| `--pitch-detector` | `yolo` | Pitch keypoints: `yolo` or `inference` (Roboflow) |
+| `--track-id` | *(none)* | `PLAYER_FOCUS` / `ALL`: spotlight this tracker id |
+| `--gk-assignment` | `goal_distance` | Goalkeeper team: `goal_distance` or `centroid` |
+| `--player-model-path` | *(bundled YOLO)* | Override YOLO player `.pt` path |
+| `--pitch-model-path` | *(bundled YOLO)* | Override YOLO pitch `.pt` path |
+| `--player-model-id` | Roboflow id | Inference player model id |
+| `--pitch-model-id` | Roboflow id | Inference pitch model id |
+| `--api-key` | env `ROBOFLOW_API_KEY` | Roboflow API key for `--*-detector inference` |
+| `--max-frames` | all frames | Cap frames processed (debug / smoke tests) |
+| `--cache` / `--no-cache` | cache on | Reuse on-disk detection cache |
+| `--cache-dir` | `data/cache` | Cache directory |
+
+Install `inference` from `requirements.txt` only when using the Roboflow
+Inference backends.
+
+#### caveats
+
+- **SPEED / DIRECTION magnitudes** — Values can differ slightly between a
+  standalone `--mode SPEED` or `--mode DIRECTION` run and the same mode produced
+  by `--mode ALL`. Standalone modes apply one Kalman velocity update per frame;
+  the shared analysis path used by `ALL` applies a second update when building
+  kinematics, which can nudge reported speeds by a small amount.
+- **Team colors** — Team assignment uses UMAP + clustering (`TeamClassifier`)
+  without a fixed random seed, so jersey colors may swap between runs even when
+  tracking ids stay stable.
+
 ## 🗺️ roadmap
 
 - [ ] Add smoothing to eliminate flickering in RADAR mode.
