@@ -172,6 +172,7 @@ These flags apply to `DIRECTION`, `SPEED`, `DISTANCE`, `PLAYER_FOCUS`, and
 | `--player-detector` | `yolo` | Player detection: `yolo` or `inference` (Roboflow) |
 | `--pitch-detector` | `yolo` | Pitch keypoints: `yolo` or `inference` (Roboflow) |
 | `--track-id` | *(none)* | `PLAYER_FOCUS` / `ALL`: spotlight this tracker id |
+| `--show-track-ids` | off | `SPEED`: show tracker ID chips on players (with speed badges) |
 | `--gk-assignment` | `goal_distance` | Goalkeeper team: `goal_distance` or `centroid` |
 | `--player-model-path` | *(bundled YOLO)* | Override YOLO player `.pt` path |
 | `--pitch-model-path` | *(bundled YOLO)* | Override YOLO pitch `.pt` path |

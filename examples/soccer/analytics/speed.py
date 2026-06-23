@@ -87,10 +87,12 @@ def _draw_speed_frame(
     joy_smoother: JoystickDotSmoother,
     radar_t,
     locked_goal_defenders,
+    *,
+    show_ids: bool = False,
 ) -> np.ndarray:
     """Team ellipses + speed badges + translucent radar minimap (shared by both paths)."""
     annotated = frame.copy()
-    draw_team_ellipses(annotated, dets)
+    draw_team_ellipses(annotated, dets, show_ids=show_ids)
     draw_joystick_dots(
         annotated, dets, joy_smoother,
         speed_by_tid=speed_by_tid, show_speed=True,
@@ -119,6 +121,7 @@ def _run_speed_standalone(args, analysis: ClipAnalysis) -> None:
     team_lock, gk_lock = locks.team_lock, locks.gk_lock
     locked_goal_defenders = locks.locked_goal_defenders
     blocked_ids = analysis.blocked_ids
+    show_ids = bool(getattr(args, "show_track_ids", False))
 
     tracker = create_player_tracker(fps, kind=args.tracker)
     vel_smoother = KalmanVelocitySmoother(alpha=0.3)
@@ -195,6 +198,7 @@ def _run_speed_standalone(args, analysis: ClipAnalysis) -> None:
             annotated = _draw_speed_frame(
                 frame, dets, speed_by_tid, joy_smoother,
                 radar_h_by_frame.get(frame_idx), locked_goal_defenders,
+                show_ids=show_ids,
             )
             sink.write_frame(annotated)
 
@@ -210,6 +214,7 @@ def _run_speed_replay(args, analysis: ClipAnalysis) -> None:
     gk_assignment = getattr(args, "gk_assignment", "goal_distance")
     locks = analysis.locks(gk_assignment)
     locked_goal_defenders = locks.locked_goal_defenders
+    show_ids = bool(getattr(args, "show_track_ids", False))
 
     vel_smoother = KalmanVelocitySmoother(alpha=0.3)
     speed_smoother = KalmanSpeedDisplaySmoother(alpha=0.3)
@@ -241,6 +246,7 @@ def _run_speed_replay(args, analysis: ClipAnalysis) -> None:
             annotated = _draw_speed_frame(
                 frame, dets, speed_by_tid, joy_smoother,
                 radar_h_by_frame.get(frame_idx), locked_goal_defenders,
+                show_ids=show_ids,
             )
             sink.write_frame(annotated)
 
