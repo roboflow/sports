@@ -72,7 +72,8 @@ def run_speed_and_distance(args, analysis: ClipAnalysis | None = None) -> None:
     standalone two-pass output, so the result is byte-for-byte equivalent whether invoked
     standalone (``analysis=None``) or shared by the run-all orchestrator.
     """
-    spotlight_tid: int | None = getattr(args, "track_id", None)
+    raw_track_id = getattr(args, "track_id", None)
+    spotlight_tid: int | None = int(raw_track_id) if raw_track_id is not None else None
 
     if analysis is None:
         analysis = compute_clip_analysis(args, need_homography=True)
@@ -124,6 +125,8 @@ def run_speed_and_distance(args, analysis: ClipAnalysis | None = None) -> None:
                 for i, tid in enumerate(dets.tracker_id):
                     tid = int(tid)
                     if tid < 0:
+                        continue
+                    if spotlight_tid is not None and tid != spotlight_tid:
                         continue
                     trace_by_tid.setdefault(tid, []).append(xy_cm[i].copy())
 

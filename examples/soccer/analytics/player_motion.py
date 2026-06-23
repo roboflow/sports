@@ -1295,6 +1295,9 @@ def build_trace_minimap(
     trace + dot; a spotlight id (SPEED_AND_DISTANCE single-player) draws only that player's
     trace + dot and omits everyone else.
     """
+    if focus_tid is not None:
+        focus_tid = int(focus_tid)
+
     if config is None:
         config = SoccerPitchConfiguration()
     radar = draw_pitch(config=config, padding=padding, scale=scale)
@@ -1308,13 +1311,16 @@ def build_trace_minimap(
     # draw traces (smoothing + outlier filtering handled in draw_trace_on_minimap).
     # Single-focus draws only the focused track's trace; follow-all keeps every
     # track's own colored trace.
-    for tid, pts in trace_by_tid.items():
+    if focus_tid is None:
+        trace_items = trace_by_tid.items()
+    else:
+        pts = trace_by_tid.get(focus_tid)
+        trace_items = ((focus_tid, pts),) if pts is not None else ()
+    for tid, pts in trace_items:
         if len(pts) < 2:
             continue
-        if focus_tid is not None and tid != focus_tid:
-            continue
         trace = np.stack(pts, axis=0)
-        color = track_id_color(tid)
+        color = track_id_color(int(tid))
         # smooth_window defaults to HOMOGRAPHY_PITCH_SMOOTH — the shared window also
         # used for distance integration, so the drawn and integrated trajectory match.
         radar = draw_trace_on_minimap(radar, trace, color, padding=padding, scale=scale)
@@ -1324,6 +1330,11 @@ def build_trace_minimap(
         pmask = player_mask(detections)
         if pmask.any():
             pdet = detections[pmask]
+            if focus_tid is not None and pdet.tracker_id is not None:
+                focus_mask = pdet.tracker_id == focus_tid
+                pdet = pdet[focus_mask] if focus_mask.any() else sv.Detections.empty()
+            if len(pdet) == 0:
+                return radar
             xy = feet_xy(pdet).astype(np.float32)
             xy_cm = transformer.transform_points(xy)
             # Drop off-pitch warps so outlier dots stop rendering on the radar.
@@ -1335,10 +1346,6 @@ def build_trace_minimap(
                     continue
                 t_id = int(tids_p[i])
                 team = int(teams[i])
-                # Single-focus shows only the focused player's dot (matches the
-                # focus-only trace); follow-all draws every player's dot.
-                if focus_tid is not None and t_id != focus_tid:
-                    continue
                 if team in (0, 1):
                     color = TEAM_COLORS[team].as_bgr()
                 else:
