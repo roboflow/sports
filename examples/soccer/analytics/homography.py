@@ -327,115 +327,33 @@ def homography_from_keypoints_radar(
 
 
 # ---------------------------------------------------------------------------
-# Minimap homography selection (no-mirror, stabilized)
+# Minimap homography selection (no-mirror)
 # ---------------------------------------------------------------------------
 # The visible radar (minimap, per-track traces and live dots) reads a single shared
-# homography per frame that is fitted to the PLAIN pitch vertices only — no plain-vs-
-# mirror candidates — so it physically cannot flip. The gated tracker H keeps its
-# mirror + layout scoring for the metrics; only the visible radar uses this no-mirror
-# map. Stability (the reason the metrics H exists) is recovered here with the same
-# frame-to-frame jump rejection plus an optional small EMA blend of the matrix.
-
-# EMA weight on the new frame's matrix when blending the no-mirror minimap H across
-# frames (the remainder weights the held matrix). Small enough to smooth residual
-# jitter without lagging real camera motion.
-RADAR_MINIMAP_EMA_ALPHA = 0.6
-
-
-def _no_mirror_radar_correspondences(
-    keypoints: sv.KeyPoints | None,
-    *,
-    config: SoccerPitchConfiguration = PITCH_CONFIG,
-    confidence: float = 0.9,
-    min_keypoints: int = DISPLAY_MIN_KEYPOINTS,
-) -> tuple[np.ndarray, np.ndarray] | None:
-    """Accepted (image_src, plain pitch_dst) keypoint correspondences for the minimap H."""
-    if keypoints is None or keypoints.xy.shape[0] == 0:
-        return None
-    n = pitch_vertex_count(config)
-    xy, conf = align_pitch_keypoints(keypoints, n_vertices=n)
-    mask = pitch_keypoint_accept_mask(xy, conf, confidence=confidence)
-    if mask.sum() < min_keypoints:
-        return None
-    src = xy[mask].astype(np.float32)
-    dst = np.array(config.vertices, dtype=np.float32)[mask]
-    return src, dst
-
-
-def _fit_no_mirror_radar(src: np.ndarray, dst: np.ndarray) -> ViewTransformer | None:
-    """Fit the minimap H to plain pitch vertices only (no mirror candidate)."""
-    try:
-        return RansacViewTransformer(source=src, target=dst, use_ransac=False)
-    except ValueError:
-        return None
-
-
-def _transformer_with_matrix(m: np.ndarray) -> ViewTransformer:
-    """Wrap a homography matrix in a ViewTransformer (transform_points only reads ``m``)."""
-    transformer = RansacViewTransformer.__new__(RansacViewTransformer)
-    transformer.m = np.asarray(m, dtype=np.float64)
-    return transformer
-
-
-def _ema_blend_transformer(
-    prev: ViewTransformer, candidate: ViewTransformer, alpha: float
-) -> ViewTransformer:
-    """EMA-blend two homography matrices (both normalised so the scale term stays 1)."""
-    m = (
-        alpha * np.asarray(candidate.m, dtype=np.float64)
-        + (1.0 - alpha) * np.asarray(prev.m, dtype=np.float64)
-    )
-    if abs(m[2, 2]) > 1e-12:
-        m = m / m[2, 2]
-    return _transformer_with_matrix(m)
+# homography per frame fitted to the PLAIN pitch vertices only — no plain-vs-mirror
+# candidates — so it physically cannot flip. It is taken verbatim from the per-frame
+# keypoint fit (homography_from_keypoints_radar) with no jump gate or smoothing layered
+# on top, so slight frame-to-frame jitter is expected and accepted in exchange for the
+# no-flip guarantee. The gated, mirror-capable, jump-gated tracker H (radar_transforms /
+# speed_transforms) stays reserved for the metrics (speed, distance, goalkeeper
+# goal-distance), which need the stable oriented fit.
 
 
 def build_radar_homography_map(
     metric: "MetricContext",
     *,
     confidence: float = 0.9,
-    max_jump_cm: float = SPEED_GATE_MAX_JUMP_CM,
-    ema_alpha: float = RADAR_MINIMAP_EMA_ALPHA,
 ) -> dict[int, ViewTransformer | None]:
-    """No-mirror, stabilized minimap/trace/live-dot homography for every known frame.
+    """No-mirror keypoint-radar H per frame for the visible minimap, traces and live dots.
 
-    Fits each frame's homography to the plain pitch vertices only (no plain-vs-mirror
-    candidates), so the visible radar can never flip. Stability is recovered without the
-    gated tracker's mirror branch by:
-      1. holding the previous accepted matrix when a new fit would teleport the in-view
-         points beyond ``max_jump_cm`` (the same jump rejection used for the gated H),
-         applied only between consecutive accepts so post-gap recovery is not blocked;
-      2. an optional small EMA blend of the matrix across frames for extra smoothness.
-    Frames without enough keypoints hold the previous matrix. Metrics keep the gated,
-    mirror-capable ``radar_transforms``; only the visible radar uses this map.
+    Returns the ungated per-frame keypoint homography map (fitted to the plain pitch
+    vertices only), shared by the minimap, the per-track traces and the live dots. With
+    no mirror branch it can never flip, and no jump gate or EMA is applied here, so the
+    visible radar follows the raw per-frame fit. Frames without enough accepted keypoints
+    map to ``None`` and are skipped by callers. The metrics keep the gated, mirror-capable
+    ``radar_transforms`` / ``speed_transforms``.
     """
-    keypoints_by_frame = metric.keypoints or {}
-    out: dict[int, ViewTransformer | None] = {}
-    prev: ViewTransformer | None = None
-    last_was_accept = False
-    for frame_idx in sorted(int(fi) for fi in keypoints_by_frame):
-        pair = _no_mirror_radar_correspondences(
-            keypoints_by_frame.get(frame_idx), confidence=confidence
-        )
-        candidate = _fit_no_mirror_radar(*pair) if pair is not None else None
-        if candidate is None:
-            out[frame_idx] = prev
-            last_was_accept = False
-            continue
-        if (
-            prev is not None
-            and last_was_accept
-            and _homography_jump_cm(prev, candidate, pair[0]) > max_jump_cm
-        ):
-            out[frame_idx] = prev
-            last_was_accept = False
-            continue
-        if prev is not None and 0.0 < ema_alpha < 1.0:
-            candidate = _ema_blend_transformer(prev, candidate, ema_alpha)
-        prev = candidate
-        out[frame_idx] = candidate
-        last_was_accept = True
-    return out
+    return metric.keypoint_radar_transforms(confidence)
 
 
 # ---------------------------------------------------------------------------

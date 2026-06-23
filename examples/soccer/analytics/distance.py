@@ -25,7 +25,6 @@ from analytics.homography import (
     MetricContext,
     build_metric_from_maps,
     build_radar_homography_map,
-    valid_pitch_cm,
 )
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
@@ -285,8 +284,6 @@ def run_distance(args) -> None:
                 for i, tid in enumerate(dets.tracker_id):
                     tid = int(tid)
                     if tid < 0:
-                        continue
-                    if not valid_pitch_cm(xy_cm[i:i + 1], margin_cm=80.0)[0]:
                         continue
                     trace_by_tid.setdefault(tid, []).append(xy_cm[i].copy())
 
