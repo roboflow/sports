@@ -2,7 +2,7 @@
 
 No homography. Image-space Kalman velocity only.
 
-Consumes a shared :class:`~analytics.clip_analysis.ClipAnalysis` (computed if absent). When
+Consumes a shared :class:`~analytics.clip_pipeline.ClipAnalysis` (computed if absent). When
 invoked standalone (``analysis=None``) the render keeps its own per-frame tracker step so
 the displayed Kalman direction is byte-for-byte identical to the prior behaviour. When the
 run-all orchestrator passes a shared analysis, the render replays that single BoTSORT pass
@@ -15,8 +15,8 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from analytics.clip_analysis import ClipAnalysis, compute_clip_analysis
-from analytics.support import (
+from analytics.clip_pipeline import ClipAnalysis, compute_clip_analysis
+from analytics.player_motion import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
     TEAM_NONE,

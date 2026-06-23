@@ -1,6 +1,6 @@
 """analytics/distance.py — Feature 3: cumulative distance, focus-all look + end-card.
 
-Consumes a shared :class:`~analytics.clip_analysis.ClipAnalysis` (computed if absent): the
+Consumes a shared :class:`~analytics.clip_pipeline.ClipAnalysis` (computed if absent): the
 single BoTSORT pass, gated homographies and per-track cumulative-distance kinematics are
 read from it rather than recomputed. The per-frame render reuses the shared PLAYER_FOCUS
 follow-all look (all players annotated with instant speed + cumulative-distance chips, plus
@@ -17,8 +17,8 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from analytics.clip_analysis import ClipAnalysis, compute_clip_analysis
-from analytics.support import (
+from analytics.clip_pipeline import ClipAnalysis, compute_clip_analysis
+from analytics.player_motion import (
     JoystickDotSmoother,
     KalmanSpeedDisplaySmoother,
     KalmanVelocitySmoother,

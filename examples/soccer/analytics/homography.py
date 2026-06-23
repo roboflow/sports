@@ -235,7 +235,7 @@ def _players_on_pitch_score(
     keeps the two teams horizontally separated; a mirrored one tends to throw players
     off-pitch. Team separation is only used when team ids are present on ``detections``.
     """
-    from analytics.support import feet_xy, player_mask
+    from analytics.player_motion import feet_xy, player_mask
 
     pmask = player_mask(detections)
     if not pmask.any():

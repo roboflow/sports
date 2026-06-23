@@ -3,7 +3,7 @@
 Displayed speed = Kalman ground speed via speed_transforms_gap_filled H map.
 Shows m/s badge per tracked player + a translucent radar minimap.
 
-Consumes a shared :class:`~analytics.clip_analysis.ClipAnalysis` (computed if absent). When
+Consumes a shared :class:`~analytics.clip_pipeline.ClipAnalysis` (computed if absent). When
 invoked standalone (``analysis=None``) the render keeps its own per-frame tracker step so
 the displayed Kalman ground speed is byte-for-byte identical to the prior behaviour. When
 the run-all orchestrator passes a shared analysis, the render replays that single BoTSORT
@@ -16,9 +16,9 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from analytics.clip_analysis import ClipAnalysis, compute_clip_analysis
+from analytics.clip_pipeline import ClipAnalysis, compute_clip_analysis
 from analytics.goalkeepers import apply_goalkeeper_frame
-from analytics.support import (
+from analytics.player_motion import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
     TEAM_NONE,

@@ -16,8 +16,8 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from analytics.clip_analysis import ClipAnalysis, compute_clip_analysis
-from analytics.support import (
+from analytics.clip_pipeline import ClipAnalysis, compute_clip_analysis
+from analytics.player_motion import (
     JoystickDotSmoother,
     KalmanSpeedDisplaySmoother,
     KalmanVelocitySmoother,

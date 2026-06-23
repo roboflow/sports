@@ -1,14 +1,14 @@
 """analytics/goalkeepers.py — optional goal-distance goalkeeper team assignment.
 
 This is ADDITIVE and OPTIONAL. It does not touch the sports library or the existing
-``resolve_goalkeepers_team_id`` centroid function in ``analytics/support.py`` (kept as the
+``resolve_goalkeepers_team_id`` centroid function in ``analytics/player_motion.py`` (kept as the
 ``centroid`` option / fallback). The better path here assigns each goalkeeper to the team
 defending the *nearer goal mouth*, decides goal sides from a defensive block (the N most
 defensive outfield players per team — not a whole-team centroid), and locks each goalkeeper
 tracklet's team over the whole clip.
 
 Class-id note: this analytics package uses PLAYER_CLASS_ID=2 / GOALKEEPER_CLASS_ID=1
-(see support.py). Goal-side ids follow the sports pitch template: TEAM_LEFT=0 defends
+(see player_motion.py). Goal-side ids follow the sports pitch template: TEAM_LEFT=0 defends
 x≈0, TEAM_RIGHT=1 defends x≈length.
 """
 
@@ -20,7 +20,7 @@ import supervision as sv
 from sports.configs.soccer import SoccerPitchConfiguration
 
 from analytics.homography import homography_from_keypoints_radar
-from analytics.support import (
+from analytics.player_motion import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
     TEAM_NONE,
@@ -375,7 +375,7 @@ def collect_team_frames(
     When ``capture_velocity`` is True the per-frame feet-referenced Kalman velocity is
     read straight off the tracker after its single update and attached to each frame's
     detections as ``data['kf_vx']`` / ``data['kf_vy']``. This lets a downstream consumer
-    (the shared :class:`~analytics.clip_analysis.ClipAnalysis`) reuse this single tracking
+    (the shared :class:`~analytics.clip_pipeline.ClipAnalysis`) reuse this single tracking
     pass for the render velocity instead of advancing a second tracker; it matches the
     single-update velocity the DISTANCE / PLAYER_FOCUS render passes read today. The
     default (False) leaves the returned detections untouched.
@@ -488,7 +488,7 @@ def derive_clip_locks(
     """Derive the team / goalkeeper / goal-defender locks from a collected clip pass.
 
     Split out of :func:`compute_clip_locks` so a single ``collect_team_frames`` tracking
-    pass can be shared (e.g. by :class:`~analytics.clip_analysis.ClipAnalysis`) and the
+    pass can be shared (e.g. by :class:`~analytics.clip_pipeline.ClipAnalysis`) and the
     locks derived for more than one ``gk_assignment`` without re-tracking. ``frames`` is
     the ``team_frames`` list from :func:`collect_team_frames`. NOTE: this mutates the
     goalkeeper ``data['team']`` entries on ``frames`` (the goal-distance / centroid fill),
@@ -542,7 +542,7 @@ def _fill_goalkeeper_teams_centroid(frames: list[tuple[int, sv.Detections]]) -> 
     the per-tracker_id team lock; without this a keeper whose class flips would only be
     voted on its player-detected frames.
     """
-    from analytics.support import resolve_goalkeepers_team_id
+    from analytics.player_motion import resolve_goalkeepers_team_id
 
     for _, dets in frames:
         if dets.data is None or len(dets) == 0 or dets.tracker_id is None:

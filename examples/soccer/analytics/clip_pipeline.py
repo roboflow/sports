@@ -1,33 +1,10 @@
-"""analytics/clip_analysis.py — shared one-pass pipeline for the player-motion analytics.
+"""Per-clip analysis pipeline shared by all analytics modes.
 
-The five analytics renders (DIRECTION, SPEED, DISTANCE, PLAYER_FOCUS follow-all and
-PLAYER_FOCUS spotlight) all sit on top of the same expensive groundwork: cached/replayed
-player detections + pitch keypoints, a fitted :class:`~sports.common.team.TeamClassifier`,
-the gated / no-mirror pitch homography maps (:class:`~analytics.homography.MetricContext`),
-one BoTSORT tracking pass (referee-filtered, one-goalkeeper-per-team) producing stable
-``tracker_id``s, the clip-level team / goalkeeper / goal-defender locks, and the per-track
-cumulative-distance kinematics.
-
-Run per mode (as the standalone entry points do when invoked one at a time) that work is
-recomputed every time — most importantly the BoTSORT pass. :class:`ClipAnalysis` factors
-it into a single reusable computation so the in-process ``run-all`` orchestrator can pay
-for it ONCE and hand the same analysis to all five renderers.
-
-Design notes
-------------
-* The single BoTSORT pass is :func:`analytics.goalkeepers.collect_team_frames` with
-  ``capture_velocity=True``: it tracks once, classifies outfield teams, and records the
-  per-frame single-update Kalman velocity. Every consumer (locks, kinematics, the replay
-  renders) reads from that one pass — no consumer advances a second tracker. This is what
-  makes BoTSORT run exactly once for a full run-all (verifiable via
-  :func:`analytics.support.get_tracker_build_count`).
-* The tracked boxes / ids from this pass are identical to those the standalone render and
-  kinematics passes produce (all use a fresh tracker of the same kind on the same
-  ``build_trackable_detections`` input), which the existing cross-pass locks already rely
-  on. The captured velocity is the same single-update velocity the DISTANCE / PLAYER_FOCUS
-  renders read today, so those modes replay byte-for-byte.
-* Homography, locks and kinematics are built lazily so a mode that does not need them
-  (DIRECTION has no pitch homography by design) never pays for them.
+Loads cached detections and pitch keypoints, runs a single BoTSORT pass with team and
+goalkeeper resolution, builds optional homography maps and kinematics, and exposes the
+result as :class:`ClipAnalysis`. Used by standalone mode entry points and by ``run-all``
+so tracking, homography, and kinematics are computed once per clip. Does not own
+low-level trackers, smoothers, or draw helpers (see ``player_motion``) or mode renders.
 """
 
 from __future__ import annotations
@@ -53,7 +30,7 @@ from analytics.homography import (
     build_metric_from_maps,
     build_radar_homography_map,
 )
-from analytics.support import (
+from analytics.player_motion import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
     TEAM_NONE,
@@ -393,7 +370,7 @@ def compute_clip_analysis(args, *, need_homography: bool = True) -> ClipAnalysis
         detections_by_frame=det_by_frame,
         capture_velocity=True,
     )
-    from analytics.support import collect_referee_tracker_ids
+    from analytics.player_motion import collect_referee_tracker_ids
 
     blocked_ids = collect_referee_tracker_ids(referee_frames)
 

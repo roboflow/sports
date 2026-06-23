@@ -1,6 +1,6 @@
 """analytics/run_all.py — in-process orchestrator for all five analytics renders.
 
-Computes the shared :class:`~analytics.clip_analysis.ClipAnalysis` ONCE (one BoTSORT pass,
+Computes the shared :class:`~analytics.clip_pipeline.ClipAnalysis` ONCE (one BoTSORT pass,
 one team-classifier fit, one set of homography maps, one kinematics integration) and then
 drives each of the five mode renderers in-process, handing them that single analysis. Each
 mode still writes its own output video; only the expensive shared groundwork is reused.
@@ -16,7 +16,7 @@ import copy
 import time
 from pathlib import Path
 
-from analytics.clip_analysis import ClipAnalysis, compute_clip_analysis
+from analytics.clip_pipeline import ClipAnalysis, compute_clip_analysis
 
 # (output suffix, human label) for the five renders, in run order.
 _RENDER_PLAN = (

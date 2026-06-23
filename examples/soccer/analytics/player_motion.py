@@ -1,6 +1,10 @@
-"""analytics/support.py — shared non-homography plumbing for player-motion analytics.
+"""Shared player-motion utilities for analytics modes.
 
-Minimal slices only; no pass/possession/carrier logic.
+Owns BoTSORT tracker factories, Kalman speed/velocity smoothers, feet anchoring,
+kinematics integration, team-classifier helpers, referee/goalkeeper hygiene,
+detector factories, and annotation helpers (ellipses, joystick dots, radar minimap,
+trace drawing). Does not own homography (see ``homography``), clip orchestration
+(see ``clip_pipeline``), or mode-specific render loops.
 """
 
 from __future__ import annotations
