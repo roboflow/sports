@@ -4,10 +4,10 @@ Displayed speed = Kalman ground speed via speed_transforms_gap_filled H map.
 Shows m/s badge per tracked player + a translucent radar minimap.
 
 Consumes a shared :class:`~analytics.clip_pipeline.ClipAnalysis` (computed if absent). When
-invoked standalone (``analysis=None``) the render keeps its own per-frame tracker step so
-the displayed Kalman ground speed is byte-for-byte identical to the prior behaviour. When
-the run-all orchestrator passes a shared analysis, the render replays that single BoTSORT
-pass (shared single-update Kalman velocity) so tracking runs only once for the run-all.
+invoked standalone (``analysis=None``) the render runs its own per-frame tracker step with
+a single update and Kalman velocity read per frame. When the run-all orchestrator passes a
+shared analysis, the render replays that single BoTSORT pass so tracking runs only once
+for the run-all.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from analytics.player_motion import (
     JoystickDotSmoother,
     KalmanSpeedDisplaySmoother,
     KalmanVelocitySmoother,
-    attach_kalman_velocity,
+    merge_kalman_velocity,
     build_trackable_detections,
     create_player_tracker,
     draw_joystick_dots,
@@ -110,7 +110,7 @@ def _draw_speed_frame(
 
 
 def _run_speed_standalone(args, analysis: ClipAnalysis) -> None:
-    """Standalone render: own per-frame tracker step (byte-for-byte with prior behaviour)."""
+    """Standalone render: own per-frame tracker step (single update per frame)."""
     fps, width, height = analysis.fps, analysis.width, analysis.height
     team_classifier = analysis.team_classifier
     det_by_frame = analysis.det_by_frame
@@ -185,8 +185,8 @@ def _run_speed_standalone(args, analysis: ClipAnalysis) -> None:
                     tracked, metric.radar_transforms.get(frame_idx), gk_lock
                 )
 
-            # ── Kalman velocity ────────────────────────────────────────────
-            dets = attach_kalman_velocity(tracked, tracker, needs_frame=needs_frame, image=frame)
+            # ── Kalman velocity (read after the single update above) ───────
+            dets = merge_kalman_velocity(tracked, tracker)
             dets = vel_smoother.smooth_detections(dets)
             # Clip-level lock has the final say so class-flipping keepers stay one colour.
             dets = relock_detection_teams(dets, team_lock)

@@ -210,8 +210,7 @@ class ClipAnalysis:
         velocity): apply the clip team lock, resolve goalkeepers (centroid inline or
         goal-distance via the gated radar H), smooth the captured velocity, then let the
         clip team lock have the final say. The captured single-update velocity matches what
-        DISTANCE / PLAYER_FOCUS read today; DIRECTION / SPEED read it here only on the
-        run-all path (their standalone path keeps their own velocity step).
+        standalone and run-all renders read for every mode.
         """
         team_arr = (
             np.array(tracked.data.get("team"), dtype=int)

@@ -187,11 +187,6 @@ Inference backends.
 
 #### caveats
 
-- **SPEED / DIRECTION magnitudes** — Values can differ slightly between a
-  standalone `--mode SPEED` or `--mode DIRECTION` run and the same mode produced
-  by `--mode ALL`. Standalone modes apply one Kalman velocity update per frame;
-  the shared analysis path used by `ALL` applies a second update when building
-  kinematics, which can nudge reported speeds by a small amount.
 - **Team colors** — Team assignment uses UMAP + clustering (`TeamClassifier`)
   without a fixed random seed, so jersey colors may swap between runs even when
   tracking ids stay stable.

@@ -468,27 +468,20 @@ def kalman_velocity_arrays(
     return kf_vx, kf_vy
 
 
-def attach_kalman_velocity(
+def merge_kalman_velocity(
     dets: sv.Detections,
     player_tracker,
     *,
-    needs_frame: bool,
-    image: np.ndarray | None,
+    min_speed: float = DEFAULT_MIN_SPEED_PX,
 ) -> sv.Detections:
-    """Run one tracker step on player rows and merge kf_vx / kf_vy onto detections."""
-    pmask = np.isin(dets.class_id, (PLAYER_CLASS_ID, GOALKEEPER_CLASS_ID))
-    n = len(dets)
-    kf_vx = np.full(n, np.nan, dtype=np.float32)
-    kf_vy = np.full(n, np.nan, dtype=np.float32)
-    if pmask.any():
-        trackable = dets[pmask]
-        player_tracker.update(
-            trackable,
-            frame=image if needs_frame else None,
-        )
-        vx_sub, vy_sub = kalman_velocity_arrays(trackable, player_tracker)
-        kf_vx[pmask] = vx_sub
-        kf_vy[pmask] = vy_sub
+    """Merge kf_vx / kf_vy onto detections from an already-updated tracker.
+
+    Call only after ``player_tracker.update()`` for the current frame. Does not
+    advance the tracker again.
+    """
+    kf_vx, kf_vy = kalman_velocity_arrays(
+        dets, player_tracker, min_speed=min_speed
+    )
     data = dict(dets.data) if dets.data else {}
     data["kf_vx"] = kf_vx
     data["kf_vy"] = kf_vy
