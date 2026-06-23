@@ -235,6 +235,7 @@ def _players_on_pitch_score(
     keeps the two teams horizontally separated; a mirrored one tends to throw players
     off-pitch. Team separation is only used when team ids are present on ``detections``.
     """
+    # player_motion imports homography at import time; defer to avoid a cycle.
     from analytics.player_motion import feet_xy, player_mask
 
     pmask = player_mask(detections)

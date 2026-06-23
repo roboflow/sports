@@ -24,6 +24,12 @@ from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
 from sports.configs.soccer import SoccerPitchConfiguration
 
+from analytics.direction import run_direction
+from analytics.distance import run_distance
+from analytics.player_focus import run_player_focus
+from analytics.run_all import run_all
+from analytics.speed import run_speed
+
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
 PITCH_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-pitch-detection.pt')
@@ -113,19 +119,14 @@ ANALYTICS_MODES = (
 def run_analytics_mode(mode: Mode, args: argparse.Namespace) -> None:
     """Dispatch the player-motion analytics modes to the analytics/ helper modules."""
     if mode == Mode.DIRECTION:
-        from analytics.direction import run_direction
         run_direction(args)
     elif mode == Mode.SPEED:
-        from analytics.speed import run_speed
         run_speed(args)
     elif mode == Mode.DISTANCE:
-        from analytics.distance import run_distance
         run_distance(args)
     elif mode == Mode.PLAYER_FOCUS:
-        from analytics.player_focus import run_player_focus
         run_player_focus(args)
     elif mode == Mode.ALL:
-        from analytics.run_all import run_all
         run_all(args)
     else:
         raise NotImplementedError(f"Mode {mode} is not an analytics mode.")

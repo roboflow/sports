@@ -9,6 +9,7 @@ trace drawing). Does not own homography (see ``homography``), clip orchestration
 
 from __future__ import annotations
 
+import colorsys
 import os
 from pathlib import Path
 from typing import Any, Callable
@@ -18,9 +19,18 @@ import numpy as np
 import supervision as sv
 from trackers import BoTSORTTracker, ByteTrackTracker
 from trackers.utils.state_representations import XCYCWHStateEstimator, XYXYStateEstimator
+from ultralytics import YOLO
 
+try:
+    from inference import get_model
+except ImportError:
+    get_model = None  # optional; only needed for --*-detector inference
+
+from analytics.homography import keypoints_from_inference_field, valid_pitch_cm
+from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
 from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
+from sports.configs.soccer import SoccerPitchConfiguration
 
 # ── class / team id constants ──────────────────────────────────────────────────
 BALL_CLASS_ID = 0
@@ -619,7 +629,6 @@ def create_player_detector(
 ):
     """Return a callable(frame_bgr) -> sv.Detections for player detection."""
     if backend == "yolo":
-        from ultralytics import YOLO
         path = model_path or PLAYER_DETECTION_MODEL_PATH
         model = YOLO(str(path)).to(device=device)
 
@@ -632,8 +641,8 @@ def create_player_detector(
         return _detect_yolo
 
     if backend == "inference":
-        import os
-        from inference import get_model
+        if get_model is None:
+            raise RuntimeError("Install the 'inference' package for inference player detection.")
         key = api_key or os.environ.get("ROBOFLOW_API_KEY")
         if not key:
             raise RuntimeError("Set ROBOFLOW_API_KEY for inference player detection.")
@@ -658,7 +667,6 @@ def create_pitch_keypoint_detector(
 ) -> Callable[[np.ndarray], sv.KeyPoints]:
     """Return a callable(frame_bgr) -> sv.KeyPoints for pitch keypoint detection."""
     if backend == "yolo":
-        from ultralytics import YOLO
         path = model_path or PITCH_DETECTION_MODEL_PATH
         model = YOLO(str(path)).to(device=device)
 
@@ -669,9 +677,8 @@ def create_pitch_keypoint_detector(
         return _kp_yolo
 
     if backend == "inference":
-        import os
-        from analytics.homography import keypoints_from_inference_field
-        from inference import get_model
+        if get_model is None:
+            raise RuntimeError("Install the 'inference' package for inference pitch keypoints.")
         key = api_key or os.environ.get("ROBOFLOW_API_KEY")
         if not key:
             raise RuntimeError("Set ROBOFLOW_API_KEY for inference pitch keypoints.")
@@ -1100,7 +1107,6 @@ def draw_distance_labels(
 
 def track_id_color(tid: int) -> tuple[int, int, int]:
     """Deterministic BGR color from tracker id (hashed palette)."""
-    import colorsys
     hue = (tid * 0.618033988749895) % 1.0
     r, g, b = colorsys.hsv_to_rgb(hue, 0.85, 0.95)
     return int(b * 255), int(g * 255), int(r * 255)
@@ -1186,9 +1192,6 @@ def draw_radar_minimap(
     alpha: float = RADAR_MINIMAP_ALPHA,
 ) -> np.ndarray:
     """Overlay a translucent radar minimap in the bottom-right corner of frame."""
-    from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
-    from sports.configs.soccer import SoccerPitchConfiguration
-
     if transformer is None:
         return frame
     config = SoccerPitchConfiguration()
@@ -1202,7 +1205,9 @@ def draw_radar_minimap(
     pmask_goal = player_mask(detections)
     left_def, right_def = (locked_goal_defenders or (TEAM_NONE, TEAM_NONE))
     if locked_goal_defenders is None and pmask_goal.any() and teams is not None:
+        # goalkeepers imports player_motion at import time; defer to avoid a cycle.
         from analytics.goalkeepers import infer_goal_defenders
+
         xy_goal = feet_xy(detections[pmask_goal]).astype(np.float32)
         xy_goal_cm = transformer.transform_points(xy_goal)
         left_def, right_def = infer_goal_defenders(xy_goal_cm, np.asarray(teams)[pmask_goal])
@@ -1256,8 +1261,6 @@ def draw_trace_on_minimap(
     radar polyline reads cleanly instead of jittering on raw per-frame warps. NaN
     points are skipped.
     """
-    from analytics.homography import valid_pitch_cm
-
     window = HOMOGRAPHY_PITCH_SMOOTH if smooth_window is None else smooth_window
     trace_cm = np.asarray(trace_cm, dtype=np.float64)
     if trace_cm.ndim == 2 and len(trace_cm):
@@ -1299,10 +1302,6 @@ def build_trace_minimap(
     trace + dot; a focus id (PLAYER_FOCUS single-focus) draws only that player's
     trace + dot and omits everyone else.
     """
-    from sports.annotators.soccer import draw_pitch
-    from sports.configs.soccer import SoccerPitchConfiguration
-    from analytics.homography import valid_pitch_cm
-
     if config is None:
         config = SoccerPitchConfiguration()
     radar = draw_pitch(config=config, padding=padding, scale=scale)

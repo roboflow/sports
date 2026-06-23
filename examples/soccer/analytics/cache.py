@@ -23,6 +23,7 @@ import os
 import pickle
 from pathlib import Path
 
+import cv2
 import numpy as np
 import supervision as sv
 
@@ -235,8 +236,6 @@ def build_or_load_detections(
     only invoked on a cache miss, so a cache hit never loads the detector model. On a
     miss the detector runs once over the clip and the result is written for later runs.
     """
-    import cv2
-
     cached = cache.load_detections(max_frames)
     if cached is not None:
         print(f"Loaded player detections from cache ({len(cached)} frames).")
@@ -276,8 +275,6 @@ def build_or_load_keypoints(
     ``detector_factory`` is a zero-arg callable returning the keypoint detector; it is
     only invoked on a cache miss, so a cache hit never loads the pitch detector model.
     """
-    import cv2
-
     cached = cache.load_keypoints(max_frames)
     if cached is not None:
         print(f"Loaded pitch keypoints from cache ({len(cached)} frames).")

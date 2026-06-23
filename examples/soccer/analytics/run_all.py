@@ -17,6 +17,10 @@ import time
 from pathlib import Path
 
 from analytics.clip_pipeline import ClipAnalysis, compute_clip_analysis
+from analytics.direction import run_direction
+from analytics.distance import run_distance
+from analytics.player_focus import run_player_focus
+from analytics.speed import run_speed
 
 # (output suffix, human label) for the five renders, in run order.
 _RENDER_PLAN = (
@@ -59,11 +63,6 @@ def _pick_focus_track_id(analysis: ClipAnalysis) -> int | None:
 
 def run_all(args) -> list[str]:
     """Compute the shared analysis once and render all five analytics videos in-process."""
-    from analytics.direction import run_direction
-    from analytics.distance import run_distance
-    from analytics.player_focus import run_player_focus
-    from analytics.speed import run_speed
-
     t_start = time.time()
 
     print("── run-all: computing shared ClipAnalysis ─────────")

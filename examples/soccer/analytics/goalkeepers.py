@@ -14,6 +14,7 @@ x≈0, TEAM_RIGHT=1 defends x≈length.
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 import supervision as sv
 
@@ -31,8 +32,10 @@ from analytics.player_motion import (
     get_crops,
     kalman_velocity_arrays,
     player_mask,
+    resolve_goalkeepers_team_id,
     split_detection_roles,
 )
+from analytics.teams import lock_teams_by_tracklet_majority
 
 # Goal-side team ids (match the sports pitch template orientation).
 TEAM_LEFT = 0
@@ -380,8 +383,6 @@ def collect_team_frames(
     single-update velocity the DISTANCE / PLAYER_FOCUS render passes read today. The
     default (False) leaves the returned detections untouched.
     """
-    import cv2
-
     cap = cv2.VideoCapture(source_video_path)
     if not cap.isOpened():
         raise FileNotFoundError(f"Cannot open video: {source_video_path}")
@@ -497,8 +498,6 @@ def derive_clip_locks(
     Returns ``(team_lock, gk_lock, locked_goal_defenders)`` with the same semantics as
     the first three elements of :func:`compute_clip_locks`.
     """
-    from analytics.teams import lock_teams_by_tracklet_majority
-
     # Resolve goalkeeper-row teams on the collected frames BEFORE the majority vote so
     # that frames detected as a goalkeeper also contribute a team vote for their track.
     # This is what lets a class-flipping keeper (player on some frames, goalkeeper on
@@ -542,8 +541,6 @@ def _fill_goalkeeper_teams_centroid(frames: list[tuple[int, sv.Detections]]) -> 
     the per-tracker_id team lock; without this a keeper whose class flips would only be
     voted on its player-detected frames.
     """
-    from analytics.player_motion import resolve_goalkeepers_team_id
-
     for _, dets in frames:
         if dets.data is None or len(dets) == 0 or dets.tracker_id is None:
             continue

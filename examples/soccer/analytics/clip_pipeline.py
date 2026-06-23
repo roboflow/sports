@@ -34,6 +34,7 @@ from analytics.player_motion import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
     TEAM_NONE,
+    collect_referee_tracker_ids,
     collect_tracks,
     compute_kinematics,
     create_pitch_keypoint_detector,
@@ -370,8 +371,6 @@ def compute_clip_analysis(args, *, need_homography: bool = True) -> ClipAnalysis
         detections_by_frame=det_by_frame,
         capture_velocity=True,
     )
-    from analytics.player_motion import collect_referee_tracker_ids
-
     blocked_ids = collect_referee_tracker_ids(referee_frames)
 
     return ClipAnalysis(
