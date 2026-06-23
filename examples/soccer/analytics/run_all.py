@@ -5,8 +5,8 @@ one team-classifier fit, one set of homography maps, one kinematics integration)
 drives each of the five mode renderers in-process, handing them that single analysis. Each
 mode still writes its own output video; only the expensive shared groundwork is reused.
 
-The five renders are DIRECTION, SPEED, DISTANCE, PLAYER_FOCUS (follow-all) and PLAYER_FOCUS
-(single-player spotlight). BoTSORT runs once for the whole run-all; each renderer reuses
+The five renders are DIRECTION, SPEED, DISTANCE, SPEED_AND_DISTANCE (all players) and
+SPEED_AND_DISTANCE (spotlight). BoTSORT runs once for the whole run-all; each renderer reuses
 that shared analysis.
 """
 
@@ -19,7 +19,7 @@ from pathlib import Path
 from analytics.clip_pipeline import ClipAnalysis, compute_clip_analysis
 from analytics.direction import run_direction
 from analytics.distance import run_distance
-from analytics.player_focus import run_player_focus
+from analytics.speed_and_distance import run_speed_and_distance
 from analytics.speed import run_speed
 
 # (output suffix, human label) for the five renders, in run order.
@@ -27,8 +27,8 @@ _RENDER_PLAN = (
     ("direction", "DIRECTION"),
     ("speed", "SPEED"),
     ("distance", "DISTANCE"),
-    ("focus-all", "PLAYER_FOCUS (follow-all)"),
-    ("focus-single", "PLAYER_FOCUS (spotlight)"),
+    ("speed-distance-all", "SPEED_AND_DISTANCE (all players)"),
+    ("speed-distance-single", "SPEED_AND_DISTANCE (spotlight)"),
 )
 
 
@@ -39,14 +39,14 @@ def _derive_target(base_path: str, suffix: str) -> str:
 
 
 def _mode_args(args, *, target: str, track_id: int | None = None):
-    """Shallow copy of ``args`` with a per-mode target path and focus track id."""
+    """Shallow copy of ``args`` with a per-mode target path and spotlight track id."""
     new = copy.copy(args)
     new.target_video_path = target
     new.track_id = track_id
     return new
 
 
-def _pick_focus_track_id(analysis: ClipAnalysis) -> int | None:
+def _pick_spotlight_track_id(analysis: ClipAnalysis) -> int | None:
     """Pick the most-active tracked player (max cumulative distance) for the spotlight.
 
     Deterministic from the shared kinematics; an explicit ``--track-id`` overrides it.
@@ -70,15 +70,15 @@ def run_all(args) -> list[str]:
     print(f"Shared analysis ready in {time.time() - t_start:.1f}s.")
 
     base = args.target_video_path
-    explicit_focus = getattr(args, "track_id", None)
-    focus_id = explicit_focus if explicit_focus is not None else _pick_focus_track_id(analysis)
-    print(f"Spotlight (PLAYER_FOCUS single) track id: {focus_id}")
+    explicit_spotlight = getattr(args, "track_id", None)
+    spotlight_id = explicit_spotlight if explicit_spotlight is not None else _pick_spotlight_track_id(analysis)
+    print(f"Spotlight (SPEED_AND_DISTANCE) track id: {spotlight_id}")
 
     outputs: list[str] = []
     timings: list[tuple[str, float]] = []
     for suffix, label in _RENDER_PLAN:
         target = _derive_target(base, suffix)
-        track_id = focus_id if suffix == "focus-single" else None
+        track_id = spotlight_id if suffix == "speed-distance-single" else None
         t_mode = time.time()
         print(f"── run-all: rendering {label} → {target} ─────────")
         if suffix == "direction":
@@ -87,8 +87,8 @@ def run_all(args) -> list[str]:
             run_speed(_mode_args(args, target=target), analysis)
         elif suffix == "distance":
             run_distance(_mode_args(args, target=target), analysis)
-        else:  # focus-all / focus-single
-            run_player_focus(_mode_args(args, target=target, track_id=track_id), analysis)
+        else:  # speed-distance-all / speed-distance-single
+            run_speed_and_distance(_mode_args(args, target=target, track_id=track_id), analysis)
         outputs.append(target)
         timings.append((label, time.time() - t_mode))
 

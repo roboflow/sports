@@ -408,7 +408,7 @@ def collect_team_frames(
     detections as ``data['kf_vx']`` / ``data['kf_vy']``. This lets a downstream consumer
     (the shared :class:`~analytics.clip_pipeline.ClipAnalysis`) reuse this single tracking
     pass for the render velocity instead of advancing a second tracker; it matches the
-    single-update velocity the DISTANCE / PLAYER_FOCUS render passes read today. The
+    single-update velocity the DISTANCE / SPEED_AND_DISTANCE render passes read today. The
     default (False) leaves the returned detections untouched.
     """
     cap = cv2.VideoCapture(source_video_path)

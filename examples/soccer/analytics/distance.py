@@ -2,9 +2,9 @@
 
 Consumes a shared :class:`~analytics.clip_pipeline.ClipAnalysis` (computed if absent): the
 single BoTSORT pass, gated homographies and per-track cumulative-distance kinematics are
-read from it rather than recomputed. The per-frame render reuses the shared PLAYER_FOCUS
+read from it rather than recomputed. The per-frame render reuses the shared SPEED_AND_DISTANCE
 follow-all look (all players annotated with instant speed + cumulative-distance chips, plus
-a translucent trace radar). DISTANCE stays distinct from PLAYER_FOCUS follow-all by
+a translucent trace radar). DISTANCE stays distinct from SPEED_AND_DISTANCE follow-all by
 appending its distance leaderboard end-card.
 
 Speed source:    Kalman ground speed + speed_transforms_gap_filled (instant chips).

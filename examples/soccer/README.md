@@ -142,18 +142,19 @@ the same detectors as the modes above (YOLO by default).
   --device mps --mode DISTANCE
   ```
 
-- `PLAYER_FOCUS` — Spotlight one tracked player (or all players when
-  `--track-id` is omitted).
+- `SPEED_AND_DISTANCE` — Per-player speed and cumulative distance overlay with
+  radar traces. Spotlight one tracked player with `--track-id`, or omit it to
+  annotate all players.
 
   ```bash
   python main.py --source_video_path data/2e57b9_0.mp4 \
-  --target_video_path data/renders/2e57b9_0-focus.mp4 \
-  --device mps --mode PLAYER_FOCUS --track-id 7
+  --target_video_path data/renders/2e57b9_0-speed-distance.mp4 \
+  --device mps --mode SPEED_AND_DISTANCE --track-id 7
   ```
 
 - `ALL` — Run-all orchestrator: computes shared tracking, homography, and
   kinematics once, then writes all five analytics renders (direction, speed,
-  distance, follow-all focus, and a single-player spotlight).
+  distance, speed-and-distance for all players, and a single-player spotlight).
 
   ```bash
   python main.py --source_video_path data/2e57b9_0.mp4 \
@@ -163,7 +164,7 @@ the same detectors as the modes above (YOLO by default).
 
 #### analytics CLI flags
 
-These flags apply to `DIRECTION`, `SPEED`, `DISTANCE`, `PLAYER_FOCUS`, and
+These flags apply to `DIRECTION`, `SPEED`, `DISTANCE`, `SPEED_AND_DISTANCE`, and
 `ALL` (ignored by the original six modes):
 
 | flag | default | purpose |
@@ -171,7 +172,7 @@ These flags apply to `DIRECTION`, `SPEED`, `DISTANCE`, `PLAYER_FOCUS`, and
 | `--tracker` | `botsort` | Tracker backend: `botsort`, `bytetrack`, or `botsort_nocmc` |
 | `--player-detector` | `yolo` | Player detection: `yolo` or `inference` (Roboflow) |
 | `--pitch-detector` | `yolo` | Pitch keypoints: `yolo` or `inference` (Roboflow) |
-| `--track-id` | *(none)* | `PLAYER_FOCUS` / `ALL`: spotlight this tracker id |
+| `--track-id` | *(none)* | `SPEED_AND_DISTANCE` / `ALL`: spotlight this tracker id |
 | `--show-track-ids` | off | `SPEED`: show tracker ID chips on players (with speed badges) |
 | `--player-model-path` | *(bundled YOLO)* | Override YOLO player `.pt` path |
 | `--pitch-model-path` | *(bundled YOLO)* | Override YOLO pitch `.pt` path |

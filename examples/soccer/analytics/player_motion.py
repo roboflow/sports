@@ -119,7 +119,7 @@ def create_player_tracker(
     # Tracker ids are minted from a class-level counter shared across instances. Reset
     # it here so each sequential pass (goalkeeper lock / first pass / render) starts ids
     # from 0; this keeps ids consistent across passes so per-tracklet locks and the
-    # PLAYER_FOCUS --track-id selection refer to the same players in every pass.
+    # SPEED_AND_DISTANCE --track-id selection refer to the same players in every pass.
     tracker.reset()
     return tracker
 
@@ -342,7 +342,7 @@ def build_trackable_detections(
 
     Single source of truth for the trackable set so the clip-level lock pass and every
     render pass hand the tracker identical input — that keeps tracker ids aligned across
-    passes (the existing two-pass distance / focus code depends on this). Enforces one
+    passes (the existing two-pass distance / speed-and-distance code depends on this). Enforces one
     goalkeeper per team, drops referee rows and outfield players that flicker onto a
     referee, and removes goalkeepers duplicating a nearby player.
     """
@@ -1072,7 +1072,7 @@ def draw_distance_labels(
 
     Uses the shared chip styling (see ``_draw_chip``) so the distance marker matches
     the speed badge, and carries an explicit metre unit (e.g. "12 m"). Used by the
-    DISTANCE and PLAYER_FOCUS features.
+    DISTANCE and SPEED_AND_DISTANCE features.
     """
     if len(detections) == 0 or detections.tracker_id is None:
         return
@@ -1290,9 +1290,9 @@ def build_trace_minimap(
 ) -> np.ndarray:
     """Build a radar minimap with per-track colored traces + current player dots.
 
-    Shared by DISTANCE and PLAYER_FOCUS so both render the same radar. With
+    Shared by DISTANCE and SPEED_AND_DISTANCE so both render the same radar. With
     ``focus_tid=None`` (follow-all / DISTANCE) every track keeps its own colored
-    trace + dot; a focus id (PLAYER_FOCUS single-focus) draws only that player's
+    trace + dot; a spotlight id (SPEED_AND_DISTANCE single-player) draws only that player's
     trace + dot and omits everyone else.
     """
     if config is None:
@@ -1364,7 +1364,7 @@ def annotate_motion_overlay(
 
     The instant Kalman ground speed rides the joystick dot (existing speed badge) and
     the cumulative-distance chip sits above the player, so the two metric chips stack
-    without overlapping. Shared by DISTANCE and PLAYER_FOCUS so the on-player metric
+    without overlapping. Shared by DISTANCE and SPEED_AND_DISTANCE so the on-player metric
     chips look identical across both demos.
     """
     draw_team_ellipses(frame, detections, show_ids=show_ids)
@@ -1392,7 +1392,7 @@ def render_follow_all_frame(
 ) -> None:
     """Annotate every player with speed+distance chips and overlay the trace radar.
 
-    This is the shared "follow-all" look: it backs both PLAYER_FOCUS (no --track-id)
+    This is the shared "follow-all" look: it backs both SPEED_AND_DISTANCE (no --track-id)
     and DISTANCE so the two render identically apart from DISTANCE's leaderboard
     end-card. Mutates ``frame`` in place.
     """

@@ -163,7 +163,7 @@ class ClipAnalysis:
         """Per-track cumulative-distance kinematics, computed once from the shared pass.
 
         Tracks are collected from the shared pass's tracked detections (referee-blocked
-        tracklets dropped first, exactly as the standalone DISTANCE / PLAYER_FOCUS first
+        tracklets dropped first, exactly as the standalone DISTANCE / SPEED_AND_DISTANCE first
         pass does) and integrated with the gated speed homographies.
         """
         if self._tracks is None:

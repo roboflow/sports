@@ -26,7 +26,7 @@ from sports.configs.soccer import SoccerPitchConfiguration
 
 from analytics.direction import run_direction
 from analytics.distance import run_distance
-from analytics.player_focus import run_player_focus
+from analytics.speed_and_distance import run_speed_and_distance
 from analytics.run_all import run_all
 from analytics.speed import run_speed
 
@@ -99,7 +99,7 @@ class Mode(Enum):
     DIRECTION = 'DIRECTION'
     SPEED = 'SPEED'
     DISTANCE = 'DISTANCE'
-    PLAYER_FOCUS = 'PLAYER_FOCUS'
+    SPEED_AND_DISTANCE = 'SPEED_AND_DISTANCE'
     # In-process orchestrator: compute the shared pipeline once, render all of the above.
     ALL = 'ALL'
 
@@ -111,7 +111,7 @@ ANALYTICS_MODES = (
     Mode.DIRECTION,
     Mode.SPEED,
     Mode.DISTANCE,
-    Mode.PLAYER_FOCUS,
+    Mode.SPEED_AND_DISTANCE,
     Mode.ALL,
 )
 
@@ -124,8 +124,8 @@ def run_analytics_mode(mode: Mode, args: argparse.Namespace) -> None:
         run_speed(args)
     elif mode == Mode.DISTANCE:
         run_distance(args)
-    elif mode == Mode.PLAYER_FOCUS:
-        run_player_focus(args)
+    elif mode == Mode.SPEED_AND_DISTANCE:
+        run_speed_and_distance(args)
     elif mode == Mode.ALL:
         run_all(args)
     else:
@@ -476,7 +476,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default='cpu')
     parser.add_argument('--mode', type=Mode, default=Mode.PLAYER_DETECTION)
 
-    # ── flags for the analytics modes (DIRECTION / SPEED / DISTANCE / PLAYER_FOCUS) ──
+    # ── flags for the analytics modes (DIRECTION / SPEED / DISTANCE / SPEED_AND_DISTANCE) ──
     # These are optional and unused by the original six modes, so their defaults keep
     # the existing behavior unchanged.
     parser.add_argument('--max-frames', dest='max_frames', type=int, default=None,
@@ -503,7 +503,7 @@ if __name__ == '__main__':
     parser.add_argument('--api-key', dest='api_key', default=None,
                         help='(analytics) Roboflow API key (also read from ROBOFLOW_API_KEY)')
     parser.add_argument('--track-id', dest='track_id', type=int, default=None,
-                        help='(analytics, PLAYER_FOCUS) Spotlight one tracker id; omit to follow all')
+                        help='(analytics, SPEED_AND_DISTANCE) Spotlight one tracker id; omit to follow all')
     parser.add_argument('--show-track-ids', dest='show_track_ids', action='store_true',
                         help='(analytics, SPEED) Show tracker ID chips on players (combine with speed badges)')
     parser.add_argument('--cache', dest='cache', action=argparse.BooleanOptionalAction,
