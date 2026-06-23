@@ -41,6 +41,8 @@ from analytics.player_motion import (
 )
 from analytics.teams import apply_team_lock, relock_detection_teams
 
+_GK_ASSIGNMENT = "goal_distance"
+
 
 def run_speed(args, analysis: ClipAnalysis | None = None) -> None:
     """Render per-player Kalman ground-speed badges (m/s) via gap-filled H."""
@@ -116,8 +118,7 @@ def _run_speed_standalone(args, analysis: ClipAnalysis) -> None:
     metric = analysis.metric
     gap_filled = analysis.gap_filled
     radar_h_by_frame = analysis.radar_h_by_frame
-    gk_assignment = getattr(args, "gk_assignment", "goal_distance")
-    locks = analysis.locks(gk_assignment)
+    locks = analysis.locks(_GK_ASSIGNMENT)
     team_lock, gk_lock = locks.team_lock, locks.gk_lock
     locked_goal_defenders = locks.locked_goal_defenders
     blocked_ids = analysis.blocked_ids
@@ -160,7 +161,7 @@ def _run_speed_standalone(args, analysis: ClipAnalysis) -> None:
                     pl_teams = team_classifier.predict(get_crops(frame, t_players))
                     team_arr[tracked.class_id == PLAYER_CLASS_ID] = pl_teams
                 team_arr = apply_team_lock(team_arr, tracked.class_id, tracked.tracker_id, team_lock)
-                if gk_assignment == "centroid":
+                if _GK_ASSIGNMENT == "centroid":
                     t_gks = tracked[tracked.class_id == GOALKEEPER_CLASS_ID]
                     if len(t_gks) and (team_arr == 0).any() and (team_arr == 1).any():
                         gk_teams = resolve_goalkeepers_team_id(
@@ -179,7 +180,7 @@ def _run_speed_standalone(args, analysis: ClipAnalysis) -> None:
             )
 
             # ── goal-distance GK assignment (per-frame + clip lock) ────────
-            if gk_assignment == "goal_distance":
+            if _GK_ASSIGNMENT == "goal_distance":
                 tracked = apply_goalkeeper_frame(
                     tracked, metric.radar_transforms.get(frame_idx), gk_lock
                 )
@@ -211,8 +212,7 @@ def _run_speed_replay(args, analysis: ClipAnalysis) -> None:
     fps, width, height = analysis.fps, analysis.width, analysis.height
     gap_filled = analysis.gap_filled
     radar_h_by_frame = analysis.radar_h_by_frame
-    gk_assignment = getattr(args, "gk_assignment", "goal_distance")
-    locks = analysis.locks(gk_assignment)
+    locks = analysis.locks(_GK_ASSIGNMENT)
     locked_goal_defenders = locks.locked_goal_defenders
     show_ids = bool(getattr(args, "show_track_ids", False))
 
@@ -238,7 +238,7 @@ def _run_speed_replay(args, analysis: ClipAnalysis) -> None:
                 tracked = sv.Detections.empty()
             dets = analysis.decorate_replay_frame(
                 frame_idx, tracked,
-                gk_assignment=gk_assignment, locks=locks, vel_smoother=vel_smoother,
+                gk_assignment=_GK_ASSIGNMENT, locks=locks, vel_smoother=vel_smoother,
             )
             speed_by_tid = _speed_by_tid(
                 dets, gap_filled.get(frame_idx), fps, speed_smoother

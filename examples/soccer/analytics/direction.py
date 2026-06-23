@@ -35,8 +35,7 @@ from analytics.player_motion import (
 from analytics.teams import apply_team_lock, relock_detection_teams
 
 # DIRECTION has no pitch homography by design, so the goal-distance GK path (which needs
-# pitch coords) is not available here: regardless of --gk-assignment the centroid rule is
-# always used for goalkeepers.
+# pitch coords) is not available here; the centroid rule is always used for goalkeepers.
 _GK_ASSIGNMENT = "centroid"
 
 

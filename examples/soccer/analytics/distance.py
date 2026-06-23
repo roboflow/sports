@@ -29,6 +29,8 @@ from analytics.player_motion import (
     render_follow_all_frame,
 )
 
+_GK_ASSIGNMENT = "goal_distance"
+
 
 def _build_end_card(
     width: int,
@@ -82,8 +84,7 @@ def run_distance(args, analysis: ClipAnalysis | None = None) -> None:
         analysis = compute_clip_analysis(args, need_homography=True)
 
     fps, width, height = analysis.fps, analysis.width, analysis.height
-    gk_assignment = getattr(args, "gk_assignment", "goal_distance")
-    locks = analysis.locks(gk_assignment)
+    locks = analysis.locks(_GK_ASSIGNMENT)
     locked_goal_defenders = locks.locked_goal_defenders
     gap_filled = analysis.gap_filled
     radar_h_by_frame = analysis.radar_h_by_frame
@@ -116,7 +117,7 @@ def run_distance(args, analysis: ClipAnalysis | None = None) -> None:
                 tracked = sv.Detections.empty()
             dets = analysis.decorate_replay_frame(
                 frame_idx, tracked,
-                gk_assignment=gk_assignment, locks=locks, vel_smoother=vel_smoother,
+                gk_assignment=_GK_ASSIGNMENT, locks=locks, vel_smoother=vel_smoother,
             )
 
             # ── update trace buffers (radar H → pitch cm) ──────────────────

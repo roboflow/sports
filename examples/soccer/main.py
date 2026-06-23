@@ -506,10 +506,6 @@ if __name__ == '__main__':
                         help='(analytics, PLAYER_FOCUS) Spotlight one tracker id; omit to follow all')
     parser.add_argument('--show-track-ids', dest='show_track_ids', action='store_true',
                         help='(analytics, SPEED) Show tracker ID chips on players (combine with speed badges)')
-    parser.add_argument('--gk-assignment', dest='gk_assignment', default='goal_distance',
-                        choices=('goal_distance', 'centroid'),
-                        help='(analytics) Goalkeeper team assignment: goal-distance (default) or '
-                             'centroid. DIRECTION always uses centroid (no homography).')
     parser.add_argument('--cache', dest='cache', action=argparse.BooleanOptionalAction,
                         default=True,
                         help='(analytics) Cache per-frame detections + pitch keypoints on disk '
