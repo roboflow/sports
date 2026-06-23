@@ -212,10 +212,13 @@ def warmup_goal_defenders_radar(
     """
     if not transforms:
         return None
+    sampled_frames = [
+        (frame_idx, dets)
+        for frame_idx, dets in frames_with_dets
+        if int(frame_idx) % sample_step == 0
+    ]
     votes: dict[tuple[int, int], int] = {}
-    for frame_idx, dets in frames_with_dets:
-        if int(frame_idx) % sample_step != 0:
-            continue
+    for frame_idx, dets in sampled_frames:
         transformer = transforms.get(int(frame_idx))
         if transformer is None:
             continue
@@ -240,20 +243,20 @@ def warmup_goal_defenders_radar(
 # stabilize_goalkeeper_teams — clip-level GK team lock per tracklet
 # ---------------------------------------------------------------------------
 
-def _sample_stabilize_frame_indices(
+def _sample_stabilize_frames(
     frames: list[tuple[int, sv.Detections]],
     *,
     max_warmup_frames: int,
     max_sample_frames: int,
-) -> set[int]:
+) -> list[tuple[int, sv.Detections]]:
     """First ``max_warmup_frames`` clip entries, evenly subsampled to at most ``max_sample_frames``."""
     warmup = frames[:max_warmup_frames]
     if not warmup:
-        return set()
+        return []
     if len(warmup) <= max_sample_frames:
-        return {int(fi) for fi, _ in warmup}
+        return warmup
     sample_idxs = np.linspace(0, len(warmup) - 1, max_sample_frames, dtype=int)
-    return {int(warmup[i][0]) for i in np.unique(sample_idxs)}
+    return [warmup[i] for i in np.unique(sample_idxs)]
 
 
 def stabilize_goalkeeper_teams(
@@ -290,20 +293,18 @@ def stabilize_goalkeeper_teams(
     else:
         left_def, right_def = TEAM_LEFT, TEAM_RIGHT
 
-    sample_frame_ids = _sample_stabilize_frame_indices(
+    sampled_frames = _sample_stabilize_frames(
         frames,
         max_warmup_frames=max_warmup_frames,
         max_sample_frames=max_sample_frames,
     )
-    if not sample_frame_ids or not transforms:
+    if not sampled_frames or not transforms:
         return {}
 
     track_positions: dict[int, list[float]] = {}
     gk_frame_counts: dict[int, int] = {}
 
-    for frame_idx, dets in frames:
-        if int(frame_idx) not in sample_frame_ids:
-            continue
+    for frame_idx, dets in sampled_frames:
         if dets.tracker_id is None:
             continue
         t = transforms.get(int(frame_idx))
