@@ -5,8 +5,9 @@ Minimal slices only; no pass/possession/carrier logic.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Any, Callable, Iterator  # noqa: F401
+from typing import Any, Callable
 
 import cv2
 import numpy as np
@@ -54,6 +55,25 @@ STRIDE = 60  # frames between team-fit samples (matches existing main.py)
 # Tracker factory
 # ---------------------------------------------------------------------------
 
+# Process-level count of player trackers built. Each full multi-object tracking pass
+# over the clip constructs exactly one tracker here, so this doubles as a cheap proof
+# of how many BoTSORT passes a run performed: the in-process run-all shares a single
+# pass (count == 1), whereas running the modes separately rebuilds a tracker per pass.
+# Inspect via ``get_tracker_build_count`` or set ``ANALYTICS_DEBUG_TRACKER=1`` to log.
+TRACKER_BUILD_COUNT = 0
+
+
+def get_tracker_build_count() -> int:
+    """Number of player trackers built so far in this process (BoTSORT-pass counter)."""
+    return TRACKER_BUILD_COUNT
+
+
+def reset_tracker_build_count() -> None:
+    """Reset the player-tracker build counter (used by tests / run-all verification)."""
+    global TRACKER_BUILD_COUNT
+    TRACKER_BUILD_COUNT = 0
+
+
 def create_player_tracker(
     frame_rate: float,
     *,
@@ -63,6 +83,10 @@ def create_player_tracker(
     minimum_iou_threshold_first_assoc: float = DEFAULT_MINIMUM_IOU_THRESHOLD_FIRST_ASSOC,
 ):
     """Return a multi-object tracker configured for football players."""
+    global TRACKER_BUILD_COUNT
+    TRACKER_BUILD_COUNT += 1
+    if os.environ.get("ANALYTICS_DEBUG_TRACKER"):
+        print(f"[analytics] BoTSORT pass #{TRACKER_BUILD_COUNT} (tracker kind={kind!r})")
     if kind == "bytetrack":
         tracker = ByteTrackTracker(
             frame_rate=frame_rate,

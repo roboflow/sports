@@ -1,7 +1,13 @@
 """analytics/speed.py — Feature 2: Kalman ground speed with demo homography.
 
 Displayed speed = Kalman ground speed via speed_transforms_gap_filled H map.
-Shows m/s + km/h badge per tracked player.
+Shows m/s badge per tracked player + a translucent radar minimap.
+
+Consumes a shared :class:`~analytics.clip_analysis.ClipAnalysis` (computed if absent). When
+invoked standalone (``analysis=None``) the render keeps its own per-frame tracker step so
+the displayed Kalman ground speed is byte-for-byte identical to the prior behaviour. When
+the run-all orchestrator passes a shared analysis, the render replays that single BoTSORT
+pass (shared single-update Kalman velocity) so tracking runs only once for the run-all.
 """
 
 from __future__ import annotations
@@ -10,123 +16,116 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from analytics.cache import (
-    FrameCache,
-    build_or_load_detections,
-    build_or_load_keypoints,
-)
-from analytics.goalkeepers import apply_goalkeeper_frame, compute_clip_locks
-from analytics.homography import (
-    MetricContext,
-    build_metric_from_maps,
-    build_radar_homography_map,
-)
+from analytics.clip_analysis import ClipAnalysis, compute_clip_analysis
+from analytics.goalkeepers import apply_goalkeeper_frame
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
-    REFEREE_CLASS_ID,
     TEAM_NONE,
+    JoystickDotSmoother,
     KalmanSpeedDisplaySmoother,
     KalmanVelocitySmoother,
-    JoystickDotSmoother,
     attach_kalman_velocity,
     build_trackable_detections,
-    create_player_detector,
-    create_pitch_keypoint_detector,
     create_player_tracker,
-    draw_speed_legend,
-    draw_team_ellipses,
     draw_joystick_dots,
     draw_radar_minimap,
+    draw_speed_legend,
+    draw_team_ellipses,
     drop_blocked_tracker_ids,
     feet_xy,
-    fit_team_classifier,
     get_crops,
     kalman_ground_speed_m_s,
     open_video,
     resolve_goalkeepers_team_id,
-    MS_TO_KMH,
 )
 from analytics.teams import apply_team_lock, relock_detection_teams
 
 
-def run_speed(args) -> None:
-    """Render per-player Kalman ground-speed badges (m/s + km/h) via gap-filled H."""
-    cap, fps, width, height = open_video(args.source_video_path)
+def run_speed(args, analysis: ClipAnalysis | None = None) -> None:
+    """Render per-player Kalman ground-speed badges (m/s) via gap-filled H."""
+    if analysis is not None:
+        _run_speed_replay(args, analysis)
+        return
+    _run_speed_standalone(args, compute_clip_analysis(args, need_homography=True))
 
-    player_model_id = getattr(args, "player_model_id", "football-players-detection-3zvbc/11")
-    pitch_model_id = getattr(args, "pitch_model_id", "football-field-detection-f07vi/15")
-    def _make_player_detector():
-        return create_player_detector(
-            backend=args.player_detector,
-            model_path=getattr(args, "player_model_path", None),
-            model_id=player_model_id,
-            device=args.device,
-            api_key=getattr(args, "api_key", None),
+
+def _speed_by_tid(
+    dets: sv.Detections,
+    transformer,
+    fps: float,
+    speed_smoother: KalmanSpeedDisplaySmoother,
+) -> dict[int, float]:
+    """Per-player smoothed Kalman ground speed (m/s) from the gap-filled speed H."""
+    speed_by_tid: dict[int, float] = {}
+    if dets.tracker_id is None or transformer is None or dets.data is None:
+        return speed_by_tid
+    kf_vx = dets.data.get("kf_vx")
+    kf_vy = dets.data.get("kf_vy")
+    if kf_vx is None:
+        return speed_by_tid
+    fxy = feet_xy(dets)
+    for i, tid in enumerate(dets.tracker_id):
+        tid = int(tid)
+        if tid < 0:
+            continue
+        vx, vy = float(kf_vx[i]), float(kf_vy[i])
+        if not (np.isfinite(vx) and np.isfinite(vy)):
+            continue
+        speed_ms = kalman_ground_speed_m_s(
+            fxy[i], np.array([vx, vy], dtype=np.float64), transformer, fps=fps,
         )
+        if speed_ms is not None:
+            speed_by_tid[tid] = speed_smoother.smooth(tid, float(speed_ms))
+    return speed_by_tid
 
-    def _make_pitch_detector():
-        return create_pitch_keypoint_detector(
-            backend=args.pitch_detector,
-            model_path=getattr(args, "pitch_model_path", None),
-            model_id=pitch_model_id,
-            device=args.device,
-            api_key=getattr(args, "api_key", None),
+
+def _draw_speed_frame(
+    frame: np.ndarray,
+    dets: sv.Detections,
+    speed_by_tid: dict[int, float],
+    joy_smoother: JoystickDotSmoother,
+    radar_t,
+    locked_goal_defenders,
+) -> np.ndarray:
+    """Team ellipses + speed badges + translucent radar minimap (shared by both paths)."""
+    annotated = frame.copy()
+    draw_team_ellipses(annotated, dets)
+    draw_joystick_dots(
+        annotated, dets, joy_smoother,
+        speed_by_tid=speed_by_tid, show_speed=True,
+    )
+    draw_speed_legend(annotated)
+    # radar minimap: no-mirror keypoint-radar H, with goal shading from the clip lock.
+    if radar_t is not None:
+        draw_radar_minimap(
+            annotated, dets, radar_t,
+            locked_goal_defenders=locked_goal_defenders,
         )
+    return annotated
 
-    # On-disk cache: detections + pitch keypoints are computed once, reused after.
-    cache = FrameCache(
-        args.source_video_path,
-        cache_dir=getattr(args, "cache_dir", None),
-        enabled=getattr(args, "cache", True),
-        player_backend=args.player_detector,
-        player_model_id=player_model_id,
-        pitch_backend=args.pitch_detector,
-        pitch_model_id=pitch_model_id,
-    )
-    det_by_frame = build_or_load_detections(
-        args.source_video_path, _make_player_detector, cache, max_frames=args.max_frames
-    )
-    kp_by_frame = build_or_load_keypoints(
-        args.source_video_path, _make_pitch_detector, cache, max_frames=args.max_frames
-    )
 
-    print("Fitting team classifier…")
-    team_classifier = fit_team_classifier(
-        cap, device=args.device, max_frames=args.max_frames, det_by_frame=det_by_frame
-    )
-
-    print("Building pitch homography maps…")
-    metric: MetricContext = build_metric_from_maps(
-        kp_by_frame, detections_by_frame=det_by_frame, pitch_confidence=0.9
-    )
-    gap_filled = metric.speed_transforms_gap_filled(0.9)
-    # Single source of truth for the minimap: the gated, orientation-locked radar H
-    # (stable across frames and upright), falling back to an orientation-locked ungated
-    # keypoint H on frames the gate never locked.
-    radar_h_by_frame = build_radar_homography_map(metric, confidence=0.9)
-
+def _run_speed_standalone(args, analysis: ClipAnalysis) -> None:
+    """Standalone render: own per-frame tracker step (byte-for-byte with prior behaviour)."""
+    fps, width, height = analysis.fps, analysis.width, analysis.height
+    team_classifier = analysis.team_classifier
+    det_by_frame = analysis.det_by_frame
+    needs_frame = analysis.needs_frame
+    metric = analysis.metric
+    gap_filled = analysis.gap_filled
+    radar_h_by_frame = analysis.radar_h_by_frame
     gk_assignment = getattr(args, "gk_assignment", "goal_distance")
-    # CMC needs the frame only for the full BoTSORT tracker; botsort_nocmc / bytetrack
-    # ignore it, so the frame is passed only for "botsort".
-    needs_frame = args.tracker == "botsort"
-    print("Building clip locks (team-id + goalkeeper)…")
-    team_lock, gk_lock, locked_goal_defenders, blocked_ids = compute_clip_locks(
-        args.source_video_path,
-        team_classifier=team_classifier,
-        tracker=create_player_tracker(fps, kind=args.tracker),
-        needs_frame=needs_frame,
-        gk_assignment=gk_assignment,
-        metric=metric,
-        max_frames=args.max_frames,
-        detections_by_frame=det_by_frame,
-    )
+    locks = analysis.locks(gk_assignment)
+    team_lock, gk_lock = locks.team_lock, locks.gk_lock
+    locked_goal_defenders = locks.locked_goal_defenders
+    blocked_ids = analysis.blocked_ids
 
     tracker = create_player_tracker(fps, kind=args.tracker)
     vel_smoother = KalmanVelocitySmoother(alpha=0.3)
     speed_smoother = KalmanSpeedDisplaySmoother(alpha=0.3)
     joy_smoother = JoystickDotSmoother(alpha=0.32)
 
+    cap, _, _, _ = open_video(args.source_video_path)
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     with sv.VideoSink(args.target_video_path, sv.VideoInfo(width, height, fps)) as sink:
         frame_idx = 0
@@ -189,46 +188,60 @@ def run_speed(args) -> None:
             dets = relock_detection_teams(dets, team_lock)
 
             # ── per-player Kalman ground speed (gap-filled H) ──────────────
-            transformer = gap_filled.get(frame_idx)
-            speed_by_tid: dict[int, float] = {}
-            if dets.tracker_id is not None and transformer is not None:
-                fxy = feet_xy(dets)
-                for i, tid in enumerate(dets.tracker_id):
-                    tid = int(tid)
-                    if tid < 0 or dets.data is None:
-                        continue
-                    kf_vx = dets.data.get("kf_vx")
-                    kf_vy = dets.data.get("kf_vy")
-                    if kf_vx is None:
-                        continue
-                    vx, vy = float(kf_vx[i]), float(kf_vy[i])
-                    if not (np.isfinite(vx) and np.isfinite(vy)):
-                        continue
-                    speed_ms = kalman_ground_speed_m_s(
-                        fxy[i], np.array([vx, vy], dtype=np.float64),
-                        transformer, fps=fps,
-                    )
-                    if speed_ms is not None:
-                        speed_by_tid[tid] = speed_smoother.smooth(tid, float(speed_ms))
-
-            # ── render ─────────────────────────────────────────────────────
-            annotated = frame.copy()
-            draw_team_ellipses(annotated, dets)
-            draw_joystick_dots(
-                annotated, dets, joy_smoother,
-                speed_by_tid=speed_by_tid, show_speed=True,
+            speed_by_tid = _speed_by_tid(
+                dets, gap_filled.get(frame_idx), fps, speed_smoother
             )
-            draw_speed_legend(annotated)
 
-            # radar minimap: gated orientation-locked radar H (stable), with the
-            # orientation-locked keypoint H fallback resolved in radar_h_by_frame.
-            radar_t = radar_h_by_frame.get(frame_idx)
-            if radar_t is not None:
-                draw_radar_minimap(
-                    annotated, dets, radar_t,
-                    locked_goal_defenders=locked_goal_defenders,
-                )
+            annotated = _draw_speed_frame(
+                frame, dets, speed_by_tid, joy_smoother,
+                radar_h_by_frame.get(frame_idx), locked_goal_defenders,
+            )
+            sink.write_frame(annotated)
 
+    cap.release()
+    print(f"Wrote {args.target_video_path}")
+
+
+def _run_speed_replay(args, analysis: ClipAnalysis) -> None:
+    """Run-all render: replay the shared single BoTSORT pass (no second tracker)."""
+    fps, width, height = analysis.fps, analysis.width, analysis.height
+    gap_filled = analysis.gap_filled
+    radar_h_by_frame = analysis.radar_h_by_frame
+    gk_assignment = getattr(args, "gk_assignment", "goal_distance")
+    locks = analysis.locks(gk_assignment)
+    locked_goal_defenders = locks.locked_goal_defenders
+
+    vel_smoother = KalmanVelocitySmoother(alpha=0.3)
+    speed_smoother = KalmanSpeedDisplaySmoother(alpha=0.3)
+    joy_smoother = JoystickDotSmoother(alpha=0.32)
+    tracked_lookup = analysis.tracked_by_frame()
+
+    cap, _, _, _ = open_video(args.source_video_path)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    with sv.VideoSink(args.target_video_path, sv.VideoInfo(width, height, fps)) as sink:
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_idx += 1
+            if args.max_frames is not None and frame_idx > args.max_frames:
+                break
+
+            tracked = tracked_lookup.get(frame_idx)
+            if tracked is None:
+                tracked = sv.Detections.empty()
+            dets = analysis.decorate_replay_frame(
+                frame_idx, tracked,
+                gk_assignment=gk_assignment, locks=locks, vel_smoother=vel_smoother,
+            )
+            speed_by_tid = _speed_by_tid(
+                dets, gap_filled.get(frame_idx), fps, speed_smoother
+            )
+            annotated = _draw_speed_frame(
+                frame, dets, speed_by_tid, joy_smoother,
+                radar_h_by_frame.get(frame_idx), locked_goal_defenders,
+            )
             sink.write_frame(annotated)
 
     cap.release()

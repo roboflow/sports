@@ -1,6 +1,12 @@
 """analytics/direction.py — Feature 1: BoTSORT tracking + team colors + joystick direction dots.
 
 No homography. Image-space Kalman velocity only.
+
+Consumes a shared :class:`~analytics.clip_analysis.ClipAnalysis` (computed if absent). When
+invoked standalone (``analysis=None``) the render keeps its own per-frame tracker step so
+the displayed Kalman direction is byte-for-byte identical to the prior behaviour. When the
+run-all orchestrator passes a shared analysis, the render replays that single BoTSORT pass
+(shared single-update Kalman velocity) so tracking runs only once for the whole run-all.
 """
 
 from __future__ import annotations
@@ -9,86 +15,54 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from analytics.cache import FrameCache, build_or_load_detections
-from analytics.goalkeepers import compute_clip_locks
+from analytics.clip_analysis import ClipAnalysis, compute_clip_analysis
 from analytics.support import (
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
-    REFEREE_CLASS_ID,
     TEAM_NONE,
     JoystickDotSmoother,
     KalmanVelocitySmoother,
     attach_kalman_velocity,
     build_trackable_detections,
-    create_player_detector,
     create_player_tracker,
     draw_joystick_dots,
     draw_team_ellipses,
     drop_blocked_tracker_ids,
-    fit_team_classifier,
     get_crops,
     open_video,
     resolve_goalkeepers_team_id,
 )
 from analytics.teams import apply_team_lock, relock_detection_teams
 
+# DIRECTION has no pitch homography by design, so the goal-distance GK path (which needs
+# pitch coords) is not available here: regardless of --gk-assignment the centroid rule is
+# always used for goalkeepers.
+_GK_ASSIGNMENT = "centroid"
 
-def run_direction(args) -> None:
+
+def run_direction(args, analysis: ClipAnalysis | None = None) -> None:
     """Render team-colored ellipses + image-space Kalman direction dots."""
-    cap, fps, width, height = open_video(args.source_video_path)
+    if analysis is not None:
+        _run_direction_replay(args, analysis)
+        return
+    _run_direction_standalone(args, compute_clip_analysis(args, need_homography=False))
 
-    player_model_id = getattr(args, "player_model_id", "football-players-detection-3zvbc/11")
 
-    def _make_player_detector():
-        return create_player_detector(
-            backend=args.player_detector,
-            model_path=getattr(args, "player_model_path", None),
-            model_id=player_model_id,
-            device=args.device,
-            api_key=getattr(args, "api_key", None),
-        )
-
-    # On-disk cache for the per-frame player detections (skips the detector on reuse).
-    cache = FrameCache(
-        args.source_video_path,
-        cache_dir=getattr(args, "cache_dir", None),
-        enabled=getattr(args, "cache", True),
-        player_backend=args.player_detector,
-        player_model_id=player_model_id,
-    )
-    det_by_frame = build_or_load_detections(
-        args.source_video_path, _make_player_detector, cache, max_frames=args.max_frames
-    )
-
-    print("Fitting team classifier…")
-    team_classifier = fit_team_classifier(
-        cap,
-        device=args.device,
-        max_frames=args.max_frames,
-        det_by_frame=det_by_frame,
-    )
-
-    # CMC needs the frame only for the full BoTSORT tracker; botsort_nocmc / bytetrack
-    # ignore it, so the frame is passed only for "botsort".
-    needs_frame = args.tracker == "botsort"
-
-    # Clip-level team-id majority lock (DIRECTION has no homography, so no GK goal lock).
-    print("Building team-id stabilization lock…")
-    team_lock, _, _, blocked_ids = compute_clip_locks(
-        args.source_video_path,
-        team_classifier=team_classifier,
-        tracker=create_player_tracker(fps, kind=args.tracker),
-        needs_frame=needs_frame,
-        gk_assignment="centroid",
-        metric=None,
-        max_frames=args.max_frames,
-        detections_by_frame=det_by_frame,
-    )
+def _run_direction_standalone(args, analysis: ClipAnalysis) -> None:
+    """Standalone render: own per-frame tracker step (byte-for-byte with prior behaviour)."""
+    fps, width, height = analysis.fps, analysis.width, analysis.height
+    team_classifier = analysis.team_classifier
+    det_by_frame = analysis.det_by_frame
+    needs_frame = analysis.needs_frame
+    locks = analysis.locks(_GK_ASSIGNMENT)
+    team_lock = locks.team_lock
+    blocked_ids = analysis.blocked_ids
 
     tracker = create_player_tracker(fps, kind=args.tracker)
     vel_smoother = KalmanVelocitySmoother(alpha=0.3)
     joy_smoother = JoystickDotSmoother(alpha=0.32)
 
+    cap, _, _, _ = open_video(args.source_video_path)
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     with sv.VideoSink(args.target_video_path, sv.VideoInfo(width, height, fps)) as sink:
         frame_idx = 0
@@ -112,10 +86,7 @@ def run_direction(args) -> None:
             )
             tracked = drop_blocked_tracker_ids(tracked, blocked_ids)
 
-            # ── team classification ────────────────────────────────────────
-            # DIRECTION has no pitch homography by design, so the goal-distance GK
-            # path (which needs pitch coords) is not available here: regardless of
-            # --gk-assignment we always use the centroid rule for goalkeepers.
+            # ── team classification (centroid GK; no homography) ────────────
             team_arr = np.full(len(tracked), TEAM_NONE, dtype=int)
             if len(tracked):
                 t_players = tracked[tracked.class_id == PLAYER_CLASS_ID]
@@ -157,6 +128,44 @@ def run_direction(args) -> None:
             draw_team_ellipses(annotated, dets_with_vel, show_ids=False)
             draw_joystick_dots(annotated, dets_with_vel, joy_smoother)
 
+            sink.write_frame(annotated)
+
+    cap.release()
+    print(f"Wrote {args.target_video_path}")
+
+
+def _run_direction_replay(args, analysis: ClipAnalysis) -> None:
+    """Run-all render: replay the shared single BoTSORT pass (no second tracker)."""
+    fps, width, height = analysis.fps, analysis.width, analysis.height
+    locks = analysis.locks(_GK_ASSIGNMENT)
+
+    vel_smoother = KalmanVelocitySmoother(alpha=0.3)
+    joy_smoother = JoystickDotSmoother(alpha=0.32)
+    tracked_lookup = analysis.tracked_by_frame()
+
+    cap, _, _, _ = open_video(args.source_video_path)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    with sv.VideoSink(args.target_video_path, sv.VideoInfo(width, height, fps)) as sink:
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_idx += 1
+            if args.max_frames is not None and frame_idx > args.max_frames:
+                break
+
+            tracked = tracked_lookup.get(frame_idx)
+            if tracked is None:
+                tracked = sv.Detections.empty()
+            dets = analysis.decorate_replay_frame(
+                frame_idx, tracked,
+                gk_assignment=_GK_ASSIGNMENT, locks=locks, vel_smoother=vel_smoother,
+            )
+
+            annotated = frame.copy()
+            draw_team_ellipses(annotated, dets, show_ids=False)
+            draw_joystick_dots(annotated, dets, joy_smoother)
             sink.write_frame(annotated)
 
     cap.release()

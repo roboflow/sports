@@ -29,6 +29,7 @@ from analytics.support import (
     combine_for_referee_check,
     feet_xy,
     get_crops,
+    kalman_velocity_arrays,
     player_mask,
     split_detection_roles,
 )
@@ -354,6 +355,7 @@ def collect_team_frames(
     needs_frame: bool,
     max_frames: int | None = None,
     detections_by_frame: dict[int, sv.Detections] | None = None,
+    capture_velocity: bool = False,
 ) -> tuple[list[tuple[int, sv.Detections]], list[tuple[int, sv.Detections]]]:
     """One detect→track→classify pass over the clip.
 
@@ -369,6 +371,14 @@ def collect_team_frames(
     ``tracker`` must be a fresh tracker of the same kind used in the render pass. When
     ``detections_by_frame`` is supplied the raw detections come from it (cache) instead
     of the detector.
+
+    When ``capture_velocity`` is True the per-frame feet-referenced Kalman velocity is
+    read straight off the tracker after its single update and attached to each frame's
+    detections as ``data['kf_vx']`` / ``data['kf_vy']``. This lets a downstream consumer
+    (the shared :class:`~analytics.clip_analysis.ClipAnalysis`) reuse this single tracking
+    pass for the render velocity instead of advancing a second tracker; it matches the
+    single-update velocity the DISTANCE / PLAYER_FOCUS render passes read today. The
+    default (False) leaves the returned detections untouched.
     """
     import cv2
 
@@ -407,12 +417,17 @@ def collect_team_frames(
                     team_arr[tracked.class_id == PLAYER_CLASS_ID] = team_classifier.predict(
                         get_crops(frame, t_players)
                     )
+            data = {"team": team_arr}
+            if capture_velocity:
+                kf_vx, kf_vy = kalman_velocity_arrays(tracked, tracker)
+                data["kf_vx"] = kf_vx
+                data["kf_vy"] = kf_vy
             dets = sv.Detections(
                 xyxy=tracked.xyxy,
                 class_id=tracked.class_id,
                 tracker_id=tracked.tracker_id,
                 confidence=tracked.confidence,
-                data={"team": team_arr},
+                data=data,
             )
             frames.append((frame_idx, dets))
             referee_frames.append((frame_idx, combine_for_referee_check(tracked, refs)))
@@ -444,8 +459,6 @@ def compute_clip_locks(
       - ``blocked_referee_ids``: tracker ids that ever coincide with a referee box and
         must be dropped from tracking, kinematics and annotation in every render pass.
     """
-    from analytics.teams import lock_teams_by_tracklet_majority
-
     frames, referee_frames = collect_team_frames(
         source_video_path,
         player_detector_fn=player_detector_fn,
@@ -456,6 +469,35 @@ def compute_clip_locks(
         detections_by_frame=detections_by_frame,
     )
     blocked_referee_ids = collect_referee_tracker_ids(referee_frames)
+    team_lock, gk_lock, locked_goal_defenders = derive_clip_locks(
+        frames,
+        gk_assignment=gk_assignment,
+        metric=metric,
+        pitch_confidence=pitch_confidence,
+    )
+    return team_lock, gk_lock, locked_goal_defenders, blocked_referee_ids
+
+
+def derive_clip_locks(
+    frames: list[tuple[int, sv.Detections]],
+    *,
+    gk_assignment: str = "goal_distance",
+    metric=None,
+    pitch_confidence: float = 0.9,
+) -> tuple[dict[int, int], dict[int, int], tuple[int, int] | None]:
+    """Derive the team / goalkeeper / goal-defender locks from a collected clip pass.
+
+    Split out of :func:`compute_clip_locks` so a single ``collect_team_frames`` tracking
+    pass can be shared (e.g. by :class:`~analytics.clip_analysis.ClipAnalysis`) and the
+    locks derived for more than one ``gk_assignment`` without re-tracking. ``frames`` is
+    the ``team_frames`` list from :func:`collect_team_frames`. NOTE: this mutates the
+    goalkeeper ``data['team']`` entries on ``frames`` (the goal-distance / centroid fill),
+    so callers that need pristine frames for more than one assignment must pass a copy.
+
+    Returns ``(team_lock, gk_lock, locked_goal_defenders)`` with the same semantics as
+    the first three elements of :func:`compute_clip_locks`.
+    """
+    from analytics.teams import lock_teams_by_tracklet_majority
 
     # Resolve goalkeeper-row teams on the collected frames BEFORE the majority vote so
     # that frames detected as a goalkeeper also contribute a team vote for their track.
@@ -490,7 +532,7 @@ def compute_clip_locks(
         if tid in team_lock:
             gk_lock[tid] = team_lock[tid]
 
-    return team_lock, gk_lock, locked_goal_defenders, blocked_referee_ids
+    return team_lock, gk_lock, locked_goal_defenders
 
 
 def _fill_goalkeeper_teams_centroid(frames: list[tuple[int, sv.Detections]]) -> None:

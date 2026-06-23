@@ -94,15 +94,19 @@ class Mode(Enum):
     SPEED = 'SPEED'
     DISTANCE = 'DISTANCE'
     PLAYER_FOCUS = 'PLAYER_FOCUS'
+    # In-process orchestrator: compute the shared pipeline once, render all of the above.
+    ALL = 'ALL'
 
 
 # Analytics modes are dispatched to the analytics/ helper modules (they manage their
-# own video IO), separately from the original generator-based modes above.
+# own video IO), separately from the original generator-based modes above. ALL is the
+# in-process run-all orchestrator that shares one ClipAnalysis across every render.
 ANALYTICS_MODES = (
     Mode.DIRECTION,
     Mode.SPEED,
     Mode.DISTANCE,
     Mode.PLAYER_FOCUS,
+    Mode.ALL,
 )
 
 
@@ -120,6 +124,9 @@ def run_analytics_mode(mode: Mode, args: argparse.Namespace) -> None:
     elif mode == Mode.PLAYER_FOCUS:
         from analytics.player_focus import run_player_focus
         run_player_focus(args)
+    elif mode == Mode.ALL:
+        from analytics.run_all import run_all
+        run_all(args)
     else:
         raise NotImplementedError(f"Mode {mode} is not an analytics mode.")
 

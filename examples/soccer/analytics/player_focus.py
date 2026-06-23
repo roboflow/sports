@@ -16,45 +16,20 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from analytics.cache import (
-    FrameCache,
-    build_or_load_detections,
-    build_or_load_keypoints,
-)
-from analytics.goalkeepers import apply_goalkeeper_frame, compute_clip_locks
-from analytics.homography import (
-    MetricContext,
-    build_metric_from_maps,
-    build_radar_homography_map,
-)
+from analytics.clip_analysis import ClipAnalysis, compute_clip_analysis
 from analytics.support import (
-    GOALKEEPER_CLASS_ID,
-    PLAYER_CLASS_ID,
-    TEAM_NONE,
+    JoystickDotSmoother,
     KalmanSpeedDisplaySmoother,
     KalmanVelocitySmoother,
-    JoystickDotSmoother,
     annotate_motion_overlay,
     build_trace_minimap,
-    build_trackable_detections,
-    collect_tracks,
-    compute_kinematics,
-    create_player_detector,
-    create_pitch_keypoint_detector,
-    create_player_tracker,
     cumulative_distance_at_frame,
-    drop_blocked_tracker_ids,
     feet_xy,
-    fit_team_classifier,
-    get_crops,
     kalman_ground_speed_m_s,
-    kalman_velocity_arrays,
     open_video,
     overlay_minimap,
     render_follow_all_frame,
-    resolve_goalkeepers_team_id,
 )
-from analytics.teams import apply_team_lock, relock_detection_teams
 
 
 def _dim_frame(frame: np.ndarray, level: float = 0.22) -> np.ndarray:
@@ -71,120 +46,33 @@ def _spotlight(frame: np.ndarray, cx: int, cy: int, radius: int = 200) -> np.nda
     return np.where(mask > 0.05, (mask * frame.astype(np.float32) + (1 - mask) * dim.astype(np.float32)).astype(np.uint8), dim)
 
 
-def run_player_focus(args) -> None:
-    """Render player focus: spotlight (with --track-id) or full radar traces (default)."""
-    cap, fps, width, height = open_video(args.source_video_path)
+def run_player_focus(args, analysis: ClipAnalysis | None = None) -> None:
+    """Render player focus: spotlight (with --track-id) or full radar traces (default).
+
+    Reuses the shared :class:`ClipAnalysis` (computed if not supplied): the single BoTSORT
+    pass, gated homographies and per-track kinematics are read from it. As with DISTANCE the
+    shared pass's tracked boxes / ids and captured single-update Kalman velocity match the
+    standalone two-pass output, so the result is byte-for-byte equivalent whether invoked
+    standalone (``analysis=None``) or shared by the run-all orchestrator.
+    """
     focus_tid: int | None = getattr(args, "track_id", None)
 
-    player_model_id = getattr(args, "player_model_id", "football-players-detection-3zvbc/11")
-    pitch_model_id = getattr(args, "pitch_model_id", "football-field-detection-f07vi/15")
-    def _make_player_detector():
-        return create_player_detector(
-            backend=args.player_detector,
-            model_path=getattr(args, "player_model_path", None),
-            model_id=player_model_id,
-            device=args.device,
-            api_key=getattr(args, "api_key", None),
-        )
+    if analysis is None:
+        analysis = compute_clip_analysis(args, need_homography=True)
 
-    def _make_pitch_detector():
-        return create_pitch_keypoint_detector(
-            backend=args.pitch_detector,
-            model_path=getattr(args, "pitch_model_path", None),
-            model_id=pitch_model_id,
-            device=args.device,
-            api_key=getattr(args, "api_key", None),
-        )
-
-    # On-disk cache: detections + pitch keypoints are computed once, reused after.
-    cache = FrameCache(
-        args.source_video_path,
-        cache_dir=getattr(args, "cache_dir", None),
-        enabled=getattr(args, "cache", True),
-        player_backend=args.player_detector,
-        player_model_id=player_model_id,
-        pitch_backend=args.pitch_detector,
-        pitch_model_id=pitch_model_id,
-    )
-    det_by_frame = build_or_load_detections(
-        args.source_video_path, _make_player_detector, cache, max_frames=args.max_frames
-    )
-    kp_by_frame = build_or_load_keypoints(
-        args.source_video_path, _make_pitch_detector, cache, max_frames=args.max_frames
-    )
-
-    print("Fitting team classifier…")
-    team_classifier = fit_team_classifier(
-        cap, device=args.device, max_frames=args.max_frames, det_by_frame=det_by_frame
-    )
-
-    print("Building pitch homography maps…")
-    metric: MetricContext = build_metric_from_maps(
-        kp_by_frame, detections_by_frame=det_by_frame, pitch_confidence=0.9
-    )
-    speed_transforms = metric.speed_transforms
-    gap_filled = metric.speed_transforms_gap_filled(0.9)
-    # Single source of truth for the minimap (traces AND live dots): the gated,
-    # orientation-locked radar H (stable + upright), with an orientation-locked ungated
-    # keypoint H fallback on frames the gate never locked.
-    radar_h_by_frame = build_radar_homography_map(metric, confidence=0.9)
-
+    fps, width, height = analysis.fps, analysis.width, analysis.height
     gk_assignment = getattr(args, "gk_assignment", "goal_distance")
-    # CMC needs the frame only for the full BoTSORT tracker; botsort_nocmc / bytetrack
-    # ignore it, so the frame is passed only for "botsort".
-    needs_frame = args.tracker == "botsort"
-    print("Building clip locks (team-id + goalkeeper)…")
-    team_lock, gk_lock, locked_goal_defenders, blocked_ids = compute_clip_locks(
-        args.source_video_path,
-        team_classifier=team_classifier,
-        tracker=create_player_tracker(fps, kind=args.tracker),
-        needs_frame=needs_frame,
-        gk_assignment=gk_assignment,
-        metric=metric,
-        max_frames=args.max_frames,
-        detections_by_frame=det_by_frame,
-    )
+    locks = analysis.locks(gk_assignment)
+    locked_goal_defenders = locks.locked_goal_defenders
+    gap_filled = analysis.gap_filled
+    radar_h_by_frame = analysis.radar_h_by_frame
 
-    # ── First pass: collect tracks for distance kinematics (ALL players) ───
     # Distance is computed for every tracked player (not just the focus id) so the
     # follow-all view can show every player's accumulated distance, and the spotlight
     # view can read the focus player's distance from the same kinematics.
-    print("First pass: collecting tracks…")
-    tracker_p1 = create_player_tracker(fps, kind=args.tracker)
+    all_tracks = analysis.tracks
+    tracked_lookup = analysis.tracked_by_frame()
 
-    def _iter_pass1():
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-        fi = 0
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            fi += 1
-            if args.max_frames is not None and fi > args.max_frames:
-                break
-            raw = det_by_frame.get(fi)
-            if raw is None:
-                raw = sv.Detections.empty()
-            trackable = build_trackable_detections(raw, frame_width=float(width))
-            tracked = (
-                tracker_p1.update(trackable, frame=frame if needs_frame else None)
-                if len(trackable) else sv.Detections.empty()
-            )
-            tracked = drop_blocked_tracker_ids(tracked, blocked_ids)
-            yield fi, tracked
-
-    all_tracks = collect_tracks(_iter_pass1())
-    compute_kinematics(
-        all_tracks,
-        fps,
-        mode="homography",
-        frame_transforms=speed_transforms,
-        min_frames=2,
-    )
-
-    # ── Second pass: render ────────────────────────────────────────────────
-    print("Second pass: rendering…")
-    tracker_p2 = create_player_tracker(fps, kind=args.tracker)
     vel_smoother = KalmanVelocitySmoother(alpha=0.3)
     speed_smoother = KalmanSpeedDisplaySmoother(alpha=0.3)
     joy_smoother = JoystickDotSmoother(alpha=0.32)
@@ -192,6 +80,7 @@ def run_player_focus(args) -> None:
     # per-tid growing trace in pitch-cm coordinates
     trace_by_tid: dict[int, list[np.ndarray]] = {}
 
+    cap, _, _, _ = open_video(args.source_video_path)
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     with sv.VideoSink(args.target_video_path, sv.VideoInfo(width, height, fps)) as sink:
         frame_idx = 0
@@ -203,62 +92,13 @@ def run_player_focus(args) -> None:
             if args.max_frames is not None and frame_idx > args.max_frames:
                 break
 
-            raw = det_by_frame.get(frame_idx)
-            if raw is None:
-                raw = sv.Detections.empty()
-            trackable = build_trackable_detections(raw, frame_width=float(width))
-            tracked = (
-                tracker_p2.update(trackable, frame=frame if needs_frame else None)
-                if len(trackable) else sv.Detections.empty()
+            tracked = tracked_lookup.get(frame_idx)
+            if tracked is None:
+                tracked = sv.Detections.empty()
+            dets = analysis.decorate_replay_frame(
+                frame_idx, tracked,
+                gk_assignment=gk_assignment, locks=locks, vel_smoother=vel_smoother,
             )
-            tracked = drop_blocked_tracker_ids(tracked, blocked_ids)
-
-            team_arr = np.full(len(tracked), TEAM_NONE, dtype=int)
-            if len(tracked):
-                t_players = tracked[tracked.class_id == PLAYER_CLASS_ID]
-                if len(t_players):
-                    pl_teams = team_classifier.predict(get_crops(frame, t_players))
-                    team_arr[tracked.class_id == PLAYER_CLASS_ID] = pl_teams
-                team_arr = apply_team_lock(team_arr, tracked.class_id, tracked.tracker_id, team_lock)
-                if gk_assignment == "centroid":
-                    t_gks = tracked[tracked.class_id == GOALKEEPER_CLASS_ID]
-                    if len(t_gks) and (team_arr == 0).any() and (team_arr == 1).any():
-                        gk_teams = resolve_goalkeepers_team_id(
-                            tracked[tracked.class_id == PLAYER_CLASS_ID],
-                            team_arr[tracked.class_id == PLAYER_CLASS_ID],
-                            t_gks,
-                        )
-                        team_arr[tracked.class_id == GOALKEEPER_CLASS_ID] = gk_teams
-
-            tracked = sv.Detections(
-                xyxy=tracked.xyxy,
-                class_id=tracked.class_id,
-                tracker_id=tracked.tracker_id,
-                confidence=tracked.confidence,
-                data={**(tracked.data or {}), "team": team_arr},
-            )
-
-            if gk_assignment == "goal_distance":
-                tracked = apply_goalkeeper_frame(
-                    tracked, metric.radar_transforms.get(frame_idx), gk_lock
-                )
-            # Read Kalman velocity from the tracker already advanced above; a second
-            # tracker.update() here would inflate/fragment tracker ids each frame and
-            # break the --track-id spotlight (and cross-pass distance attribution).
-            kf_vx, kf_vy = kalman_velocity_arrays(tracked, tracker_p2)
-            data = dict(tracked.data) if tracked.data else {}
-            data["kf_vx"] = kf_vx
-            data["kf_vy"] = kf_vy
-            dets = sv.Detections(
-                xyxy=tracked.xyxy,
-                class_id=tracked.class_id,
-                tracker_id=tracked.tracker_id,
-                confidence=tracked.confidence,
-                data=data,
-            )
-            dets = vel_smoother.smooth_detections(dets)
-            # Clip-level lock has the final say so class-flipping keepers stay one colour.
-            dets = relock_detection_teams(dets, team_lock)
 
             # ── update trace buffers (radar H → pitch cm) ──────────────────
             radar_h = radar_h_by_frame.get(frame_idx)
