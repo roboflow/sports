@@ -1295,8 +1295,9 @@ def build_trace_minimap(
     """Build a radar minimap with per-track colored traces + current player dots.
 
     Shared by DISTANCE and PLAYER_FOCUS so both render the same radar. With
-    ``focus_tid=None`` (follow-all / DISTANCE) every track keeps its own color; a
-    focus id (PLAYER_FOCUS spotlight) dims the other traces and dots.
+    ``focus_tid=None`` (follow-all / DISTANCE) every track keeps its own colored
+    trace + dot; a focus id (PLAYER_FOCUS single-focus) draws only that player's
+    trace + dot and omits everyone else.
     """
     from sports.annotators.soccer import draw_pitch
     from sports.configs.soccer import SoccerPitchConfiguration
@@ -1312,15 +1313,18 @@ def build_trace_minimap(
                 config, left_defender_team=left_def, right_defender_team=right_def,
                 team_colors=TEAM_COLORS, padding=padding, scale=scale, pitch=radar,
             )
-    # draw traces (smoothing + outlier filtering handled in draw_trace_on_minimap)
+    # draw traces (smoothing + outlier filtering handled in draw_trace_on_minimap).
+    # Single-focus draws only the focused track's trace; follow-all keeps every
+    # track's own colored trace.
     for tid, pts in trace_by_tid.items():
         if len(pts) < 2:
             continue
-        trace = np.stack(pts, axis=0)
         if focus_tid is not None and tid != focus_tid:
-            color = (60, 60, 60)
-        else:
-            color = track_id_color(tid)
+            continue
+        trace = np.stack(pts, axis=0)
+        color = track_id_color(tid)
+        # smooth_window defaults to HOMOGRAPHY_PITCH_SMOOTH — the shared window also
+        # used for distance integration, so the drawn and integrated trajectory match.
         radar = draw_trace_on_minimap(radar, trace, color, padding=padding, scale=scale)
 
     # draw current player positions
@@ -1339,9 +1343,11 @@ def build_trace_minimap(
                     continue
                 t_id = int(tids_p[i])
                 team = int(teams[i])
+                # Single-focus shows only the focused player's dot (matches the
+                # focus-only trace); follow-all draws every player's dot.
                 if focus_tid is not None and t_id != focus_tid:
-                    color = (60, 60, 60)
-                elif team in (0, 1):
+                    continue
+                if team in (0, 1):
                     color = TEAM_COLORS[team].as_bgr()
                 else:
                     color = track_id_color(t_id) if t_id >= 0 else (150, 150, 150)
@@ -1434,7 +1440,10 @@ def open_video(path: str) -> tuple[cv2.VideoCapture, float, int, int]:
 # ---------------------------------------------------------------------------
 
 MAX_PHYSICAL_STEP_MS = 12.5   # ~45 km/h hard cap on a single-frame step
-HOMOGRAPHY_PITCH_SMOOTH = 5   # median window on pitch trajectory before distance integration
+# One shared median window (odd) applied to the pitch trajectory for BOTH distance
+# integration and the visible radar trace polyline, so the shown and integrated
+# trajectory stay consistent. Larger = smoother trace (and smoother distance).
+HOMOGRAPHY_PITCH_SMOOTH = 9   # median window on pitch trajectory (distance + drawn trace)
 HOMOGRAPHY_XY_SMOOTH = 5      # moving-average window on image feet before warping to pitch
 
 

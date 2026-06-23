@@ -36,14 +36,29 @@ def _dim_frame(frame: np.ndarray, level: float = 0.22) -> np.ndarray:
     return np.clip(frame.astype(np.float32) * level, 0, 255).astype(np.uint8)
 
 
-def _spotlight(frame: np.ndarray, cx: int, cy: int, radius: int = 200) -> np.ndarray:
-    """Spotlight: dim the frame everywhere except within radius of (cx, cy)."""
+# Single-focus spotlight geometry. The Gaussian falloff sigma scales with the
+# radius, so the lit region keeps a small fully-bright core and a soft gradient
+# into the dimmed background instead of a hard bright disc — the focused player
+# reads as a tight highlight rather than an oversized circle.
+SPOTLIGHT_RADIUS = 210
+SPOTLIGHT_STRENGTH = 0.88
+
+
+def _spotlight(
+    frame: np.ndarray,
+    cx: int,
+    cy: int,
+    radius: int = SPOTLIGHT_RADIUS,
+    strength: float = SPOTLIGHT_STRENGTH,
+) -> np.ndarray:
+    """Spotlight: dim the frame, then restore the focus player within a soft circle."""
+    dimmed = _dim_frame(frame)
     mask = np.zeros(frame.shape[:2], dtype=np.float32)
     cv2.circle(mask, (cx, cy), radius, 1.0, -1, cv2.LINE_AA)
-    mask = cv2.GaussianBlur(mask, (0, 0), radius // 4)
-    mask = np.clip(mask, 0, 1)[..., np.newaxis]
-    dim = _dim_frame(frame)
-    return np.where(mask > 0.05, (mask * frame.astype(np.float32) + (1 - mask) * dim.astype(np.float32)).astype(np.uint8), dim)
+    mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=radius * 0.38)
+    mask = (mask[..., np.newaxis] * strength).astype(np.float32)
+    out = dimmed.astype(np.float32) * (1.0 - mask) + frame.astype(np.float32) * mask
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def run_player_focus(args, analysis: ClipAnalysis | None = None) -> None:
@@ -154,13 +169,14 @@ def run_player_focus(args, analysis: ClipAnalysis | None = None) -> None:
             if focus_tid is not None:
                 # spotlight mode: dim the scene, restore the focus player area, and show
                 # the focus player's speed + distance chips (no lateral HUD panel). The
-                # radar dims every other trace/dot via focus_tid.
+                # radar shows only the focused player's trace + dot via focus_tid.
                 focus_mask = dets.tracker_id == focus_tid if dets.tracker_id is not None else np.zeros(len(dets), dtype=bool)
                 visible = bool(focus_mask.any())
                 if visible:
-                    cx_f = int((dets.xyxy[focus_mask][0, 0] + dets.xyxy[focus_mask][0, 2]) / 2)
-                    cy_f = int((dets.xyxy[focus_mask][0, 1] + dets.xyxy[focus_mask][0, 3]) / 2)
-                    annotated = _spotlight(frame, cx_f, cy_f, radius=200)
+                    box = dets.xyxy[focus_mask][0]
+                    cx_f = int((box[0] + box[2]) / 2)
+                    cy_f = int(box[3])  # feet (ground contact) anchor
+                    annotated = _spotlight(frame, cx_f, cy_f)
                 else:
                     annotated = _dim_frame(frame)
                 marked = dets[focus_mask]
