@@ -55,6 +55,8 @@ def _speed_by_tid(
     transformer,
     fps: float,
     speed_smoother: KalmanSpeedDisplaySmoother,
+    *,
+    only_tid: int | None = None,
 ) -> dict[int, float]:
     """Per-player smoothed Kalman ground speed (m/s) from the gap-filled speed H."""
     speed_by_tid: dict[int, float] = {}
@@ -69,6 +71,8 @@ def _speed_by_tid(
         tid = int(tid)
         if tid < 0:
             continue
+        if only_tid is not None and tid != only_tid:
+            continue
         vx, vy = float(kf_vx[i]), float(kf_vy[i])
         if not (np.isfinite(vx) and np.isfinite(vy)):
             continue
@@ -78,6 +82,25 @@ def _speed_by_tid(
         if speed_ms is not None:
             speed_by_tid[tid] = speed_smoother.smooth(tid, float(speed_ms))
     return speed_by_tid
+
+
+def _draw_speed_overlay(
+    frame: np.ndarray,
+    dets: sv.Detections,
+    speed_by_tid: dict[int, float],
+    joy_smoother: JoystickDotSmoother,
+    *,
+    show_ids: bool = False,
+    show_legend: bool = True,
+) -> None:
+    """Team ellipses + speed badges + optional legend (in-place)."""
+    draw_team_ellipses(frame, dets, show_ids=show_ids)
+    draw_joystick_dots(
+        frame, dets, joy_smoother,
+        speed_by_tid=speed_by_tid, show_speed=True,
+    )
+    if show_legend:
+        draw_speed_legend(frame)
 
 
 def _draw_speed_frame(
@@ -92,12 +115,9 @@ def _draw_speed_frame(
 ) -> np.ndarray:
     """Team ellipses + speed badges + translucent radar minimap (shared by both paths)."""
     annotated = frame.copy()
-    draw_team_ellipses(annotated, dets, show_ids=show_ids)
-    draw_joystick_dots(
-        annotated, dets, joy_smoother,
-        speed_by_tid=speed_by_tid, show_speed=True,
+    _draw_speed_overlay(
+        annotated, dets, speed_by_tid, joy_smoother, show_ids=show_ids,
     )
-    draw_speed_legend(annotated)
     # radar minimap: no-mirror keypoint-radar H, with goal shading from the clip lock.
     if radar_t is not None:
         draw_radar_minimap(

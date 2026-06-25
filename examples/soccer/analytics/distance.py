@@ -18,15 +18,18 @@ import numpy as np
 import supervision as sv
 
 from analytics.clip_pipeline import ClipAnalysis, compute_clip_analysis
+from analytics.speed import _draw_speed_overlay, _speed_by_tid
 from analytics.player_motion import (
     JoystickDotSmoother,
     KalmanSpeedDisplaySmoother,
     KalmanVelocitySmoother,
+    build_trace_minimap,
     cumulative_distance_at_frame,
+    draw_distance_labels,
+    draw_speed_legend,
     feet_xy,
-    kalman_ground_speed_m_s,
     open_video,
-    render_follow_all_frame,
+    overlay_minimap,
 )
 
 _GK_ASSIGNMENT = "goal_distance"
@@ -131,27 +134,9 @@ def run_distance(args, analysis: ClipAnalysis | None = None) -> None:
                         continue
                     trace_by_tid.setdefault(tid, []).append(xy_cm[i].copy())
 
-            # ── Kalman ground speed per player (gap-filled H) ──────────────
-            speed_t = gap_filled.get(frame_idx)
-            speed_by_tid: dict[int, float] = {}
-            if speed_t is not None and dets.tracker_id is not None and dets.data is not None:
-                fxy = feet_xy(dets)
-                kf_vx = dets.data.get("kf_vx")
-                kf_vy = dets.data.get("kf_vy")
-                if kf_vx is not None:
-                    for i, tid in enumerate(dets.tracker_id):
-                        tid = int(tid)
-                        if tid < 0:
-                            continue
-                        vx, vy = float(kf_vx[i]), float(kf_vy[i])
-                        if not (np.isfinite(vx) and np.isfinite(vy)):
-                            continue
-                        s = kalman_ground_speed_m_s(
-                            fxy[i], np.array([vx, vy], dtype=np.float64),
-                            speed_t, fps=fps,
-                        )
-                        if s is not None:
-                            speed_by_tid[tid] = speed_smoother.smooth(tid, float(s))
+            speed_by_tid = _speed_by_tid(
+                dets, gap_filled.get(frame_idx), fps, speed_smoother,
+            )
 
             # ── cumulative distance per tid at this frame ──────────────────
             dist_by_tid: dict[int, float] = {}
@@ -167,16 +152,16 @@ def run_distance(args, analysis: ClipAnalysis | None = None) -> None:
 
             # ── render: shared follow-all look (chips + trace radar) ───────
             annotated = frame.copy()
-            render_follow_all_frame(
-                annotated, dets,
-                joystick_smoother=joy_smoother,
-                speed_by_tid=speed_by_tid,
-                distance_by_tid=dist_by_tid,
-                trace_by_tid=trace_by_tid,
-                radar_transformer=radar_h_by_frame.get(frame_idx),
-                locked_goal_defenders=locked_goal_defenders,
-                show_legend=True,
+            _draw_speed_overlay(
+                annotated, dets, speed_by_tid, joy_smoother, show_legend=False,
             )
+            draw_distance_labels(annotated, dets, dist_by_tid)
+            draw_speed_legend(annotated)
+            mini_radar = build_trace_minimap(
+                dets, radar_h_by_frame.get(frame_idx), trace_by_tid, None,
+                locked_goal_defenders=locked_goal_defenders,
+            )
+            overlay_minimap(annotated, mini_radar)
             sink.write_frame(annotated)
 
         # ── end-card (3 seconds) — keeps DISTANCE distinct from follow-all ──
