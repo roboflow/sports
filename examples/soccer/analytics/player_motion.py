@@ -5,6 +5,9 @@ kinematics integration, team-classifier helpers, referee/goalkeeper hygiene,
 detector factories, and annotation helpers (ellipses, joystick dots, radar minimap,
 trace drawing). Does not own homography (see ``homography``), clip orchestration
 (see ``clip_pipeline``), or mode-specific render loops.
+
+Canonical exports for stacked pass PR: ``feet_xy``, ``player_mask``, ``draw_goals_on_pitch``,
+joystick/speed badge helpers (``draw_joystick_dots``, ``draw_speed_badge``, ``_draw_chip``).
 """
 
 from __future__ import annotations
@@ -26,18 +29,19 @@ try:
 except ImportError:
     get_model = None  # optional; only needed for --*-detector inference
 
+from analytics.class_ids import (
+    BALL_CLASS_ID,
+    GOALKEEPER_CLASS_ID,
+    PLAYER_CLASS_ID,
+    REFEREE_CLASS_ID,
+    TEAM_NONE,
+)
+from analytics.draw_helpers import draw_text_shadow
 from analytics.homography import keypoints_from_inference_field, valid_pitch_cm
 from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
 from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
 from sports.configs.soccer import SoccerPitchConfiguration
-
-# ── class / team id constants ──────────────────────────────────────────────────
-BALL_CLASS_ID = 0
-GOALKEEPER_CLASS_ID = 1
-PLAYER_CLASS_ID = 2
-REFEREE_CLASS_ID = 3
-TEAM_NONE = -1
 
 # ── paths (data/ lives one dir above analytics/) ──────────────────────────────
 _SOCCER_DIR = Path(__file__).resolve().parent.parent
@@ -201,19 +205,6 @@ def _detection_overlap_with_referees(
         if inside.any():
             overlap[i] = True
     return overlap
-
-
-def suppress_players_overlapping_referees(
-    players: sv.Detections,
-    referees: sv.Detections,
-    *,
-    iou_threshold: float = REFEREE_PLAYER_IOU_THRESHOLD,
-) -> sv.Detections:
-    """Drop outfield player rows that duplicate a referee detection (one person, two classes)."""
-    if len(players) == 0 or len(referees) == 0:
-        return players
-    drop = _detection_overlap_with_referees(players, referees, iou_threshold=iou_threshold)
-    return players[~drop]
 
 
 def suppress_goalkeepers_overlapping_players(
@@ -827,11 +818,17 @@ def _draw_text_shadow(
     thickness: int = 1,
     shadow_offset: tuple[int, int] = (1, 1),
 ) -> None:
-    x, y = org
-    sx, sy = shadow_offset
-    font = cv2.FONT_HERSHEY_DUPLEX
-    cv2.putText(frame, text, (x + sx, y + sy), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
-    cv2.putText(frame, text, (x, y), font, font_scale, color_bgr, thickness, cv2.LINE_AA)
+    draw_text_shadow(
+        frame,
+        text,
+        org,
+        font_scale=font_scale,
+        color_bgr=color_bgr,
+        thickness=thickness,
+        shadow_offset=shadow_offset,
+        font=cv2.FONT_HERSHEY_DUPLEX,
+        ascii_safe=False,
+    )
 
 
 def _chip_box_size(text: str) -> tuple[int, int, int, int]:

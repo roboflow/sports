@@ -30,15 +30,17 @@ from analytics.speed_and_distance import run_speed_and_distance
 from analytics.run_all import run_all
 from analytics.speed import run_speed
 
+from analytics.class_ids import (
+    BALL_CLASS_ID,
+    GOALKEEPER_CLASS_ID,
+    PLAYER_CLASS_ID,
+    REFEREE_CLASS_ID,
+)
+
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
 PITCH_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-pitch-detection.pt')
 BALL_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-ball-detection.pt')
-
-BALL_CLASS_ID = 0
-GOALKEEPER_CLASS_ID = 1
-PLAYER_CLASS_ID = 2
-REFEREE_CLASS_ID = 3
 
 STRIDE = 60
 CONFIG = SoccerPitchConfiguration()

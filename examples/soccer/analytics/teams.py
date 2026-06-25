@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import supervision as sv
 
-from analytics.player_motion import TEAM_NONE
+from analytics.class_ids import TEAM_NONE
 
 
 def lock_teams_by_tracklet_majority(

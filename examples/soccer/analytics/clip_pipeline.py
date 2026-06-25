@@ -30,10 +30,8 @@ from analytics.homography import (
     build_metric_from_maps,
     build_radar_homography_map,
 )
+from analytics.class_ids import GOALKEEPER_CLASS_ID, PLAYER_CLASS_ID, TEAM_NONE
 from analytics.player_motion import (
-    GOALKEEPER_CLASS_ID,
-    PLAYER_CLASS_ID,
-    TEAM_NONE,
     collect_referee_tracker_ids,
     collect_tracks,
     compute_kinematics,

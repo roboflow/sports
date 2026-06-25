@@ -8,8 +8,10 @@ defensive outfield players per team — not a whole-team centroid), and locks ea
 tracklet's team over the whole clip.
 
 Class-id note: this analytics package uses PLAYER_CLASS_ID=2 / GOALKEEPER_CLASS_ID=1
-(see player_motion.py). Goal-side ids follow the sports pitch template: TEAM_LEFT=0 defends
-x≈0, TEAM_RIGHT=1 defends x≈length.
+(see ``analytics/class_ids.py``). Goal-side ids follow the sports pitch template: TEAM_LEFT=0
+defends x≈0, TEAM_RIGHT=1 defends x≈length.
+
+Canonical exports for stacked pass PR: ``infer_goal_defenders``, ``image_to_pitch_cm``.
 """
 
 from __future__ import annotations
@@ -20,10 +22,8 @@ import supervision as sv
 
 from sports.configs.soccer import SoccerPitchConfiguration
 
+from analytics.class_ids import GOALKEEPER_CLASS_ID, PLAYER_CLASS_ID, TEAM_NONE
 from analytics.player_motion import (
-    GOALKEEPER_CLASS_ID,
-    PLAYER_CLASS_ID,
-    TEAM_NONE,
     build_trackable_detections,
     collect_referee_tracker_ids,
     combine_for_referee_check,
@@ -516,15 +516,14 @@ def derive_clip_locks(
 ) -> tuple[dict[int, int], dict[int, int], tuple[int, int] | None]:
     """Derive the team / goalkeeper / goal-defender locks from a collected clip pass.
 
-    Split out of :func:`compute_clip_locks` so a single ``collect_team_frames`` tracking
-    pass can be shared (e.g. by :class:`~analytics.clip_pipeline.ClipAnalysis`) and the
-    locks derived for more than one ``gk_assignment`` without re-tracking. ``frames`` is
-    the ``team_frames`` list from :func:`collect_team_frames`. NOTE: this mutates the
-    goalkeeper ``data['team']`` entries on ``frames`` (the goal-distance / centroid fill),
-    so callers that need pristine frames for more than one assignment must pass a copy.
+    A single ``collect_team_frames`` tracking pass can be shared (e.g. by
+    :class:`~analytics.clip_pipeline.ClipAnalysis`) and the locks derived for more than
+    one ``gk_assignment`` without re-tracking. ``frames`` is the ``team_frames`` list
+    from :func:`collect_team_frames`. NOTE: this mutates the goalkeeper ``data['team']``
+    entries on ``frames`` (the goal-distance / centroid fill), so callers that need
+    pristine frames for more than one assignment must pass a copy.
 
-    Returns ``(team_lock, gk_lock, locked_goal_defenders)`` with the same semantics as
-    the first three elements of :func:`compute_clip_locks`.
+    Returns ``(team_lock, gk_lock, locked_goal_defenders)``.
     """
     # Resolve goalkeeper-row teams on the collected frames BEFORE the majority vote so
     # that frames detected as a goalkeeper also contribute a team vote for their track.

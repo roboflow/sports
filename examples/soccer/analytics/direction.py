@@ -16,10 +16,8 @@ import numpy as np
 import supervision as sv
 
 from analytics.clip_pipeline import ClipAnalysis, compute_clip_analysis
+from analytics.class_ids import GOALKEEPER_CLASS_ID, PLAYER_CLASS_ID, TEAM_NONE
 from analytics.player_motion import (
-    GOALKEEPER_CLASS_ID,
-    PLAYER_CLASS_ID,
-    TEAM_NONE,
     JoystickDotSmoother,
     KalmanVelocitySmoother,
     merge_kalman_velocity,
