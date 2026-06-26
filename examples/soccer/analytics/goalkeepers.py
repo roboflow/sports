@@ -463,48 +463,6 @@ def collect_team_frames(
     return frames, referee_frames
 
 
-def compute_clip_locks(
-    source_video_path: str,
-    *,
-    player_detector_fn=None,
-    team_classifier,
-    tracker,
-    needs_frame: bool,
-    gk_assignment: str = "goal_distance",
-    metric=None,
-    pitch_confidence: float = 0.9,
-    max_frames: int | None = None,
-    detections_by_frame: dict[int, sv.Detections] | None = None,
-) -> tuple[dict[int, int], dict[int, int], tuple[int, int] | None, frozenset[int]]:
-    """Clip-level stabilization from a single detect→track→classify pass.
-
-    Returns ``(team_lock, gk_lock, locked_goal_defenders, blocked_referee_ids)``:
-      - ``team_lock``: majority-vote team per outfield tracklet (always computed).
-      - ``gk_lock``: stabilized team per goalkeeper tracklet (goal-distance mode only).
-      - ``locked_goal_defenders``: ``(left_team, right_team)`` for radar goal shading
-        (goal-distance mode only, else ``None``).
-      - ``blocked_referee_ids``: tracker ids that ever coincide with a referee box and
-        must be dropped from tracking, kinematics and annotation in every render pass.
-    """
-    frames, referee_frames = collect_team_frames(
-        source_video_path,
-        player_detector_fn=player_detector_fn,
-        team_classifier=team_classifier,
-        tracker=tracker,
-        needs_frame=needs_frame,
-        max_frames=max_frames,
-        detections_by_frame=detections_by_frame,
-    )
-    blocked_referee_ids = collect_referee_tracker_ids(referee_frames)
-    team_lock, gk_lock, locked_goal_defenders = derive_clip_locks(
-        frames,
-        gk_assignment=gk_assignment,
-        metric=metric,
-        pitch_confidence=pitch_confidence,
-    )
-    return team_lock, gk_lock, locked_goal_defenders, blocked_referee_ids
-
-
 def derive_clip_locks(
     frames: list[tuple[int, sv.Detections]],
     *,

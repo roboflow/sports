@@ -1356,67 +1356,6 @@ def build_trace_minimap(
     return radar
 
 
-def annotate_motion_overlay(
-    frame: np.ndarray,
-    detections: sv.Detections,
-    *,
-    joystick_smoother: JoystickDotSmoother | None,
-    speed_by_tid: dict[int, float] | None,
-    distance_by_tid: dict[int, float] | None,
-    show_ids: bool = False,
-) -> None:
-    """Draw team ellipses + instant-speed badge + cumulative-distance chip per player.
-
-    The instant Kalman ground speed rides the joystick dot (existing speed badge) and
-    the cumulative-distance chip sits above the player, so the two metric chips stack
-    without overlapping. Shared by DISTANCE and SPEED_AND_DISTANCE so the on-player metric
-    chips look identical across both demos.
-    """
-    draw_team_ellipses(frame, detections, show_ids=show_ids)
-    draw_joystick_dots(
-        frame, detections, joystick_smoother,
-        speed_by_tid=speed_by_tid, show_speed=speed_by_tid is not None,
-    )
-    if distance_by_tid is not None:
-        draw_distance_labels(frame, detections, distance_by_tid)
-
-
-def render_follow_all_frame(
-    frame: np.ndarray,
-    detections: sv.Detections,
-    *,
-    joystick_smoother: JoystickDotSmoother | None,
-    speed_by_tid: dict[int, float] | None,
-    distance_by_tid: dict[int, float] | None,
-    trace_by_tid: dict[int, list[np.ndarray]],
-    radar_transformer: ViewTransformer | None,
-    locked_goal_defenders: tuple[int, int] | None = None,
-    focus_tid: int | None = None,
-    show_legend: bool = True,
-    show_ids: bool = False,
-) -> None:
-    """Annotate every player with speed+distance chips and overlay the trace radar.
-
-    This is the shared "follow-all" look: it backs both SPEED_AND_DISTANCE (no --track-id)
-    and DISTANCE so the two render identically apart from DISTANCE's leaderboard
-    end-card. Mutates ``frame`` in place.
-    """
-    annotate_motion_overlay(
-        frame, detections,
-        joystick_smoother=joystick_smoother,
-        speed_by_tid=speed_by_tid,
-        distance_by_tid=distance_by_tid,
-        show_ids=show_ids,
-    )
-    if show_legend:
-        draw_speed_legend(frame)
-    mini_radar = build_trace_minimap(
-        detections, radar_transformer, trace_by_tid, focus_tid,
-        locked_goal_defenders=locked_goal_defenders,
-    )
-    overlay_minimap(frame, mini_radar)
-
-
 # ---------------------------------------------------------------------------
 # Video helpers
 # ---------------------------------------------------------------------------
