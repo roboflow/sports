@@ -1000,6 +1000,8 @@ def draw_joystick_dots(
     """Draw a team-colored directional velocity dot on each player, optional speed badge.
 
     The dot color matches the player's team; referees / unassigned rows get no dot.
+    When Kalman speed is below the pixel threshold or undefined, the dot sits at the
+    ellipse center (feet) instead of being omitted.
     When ``show_speed`` and ``speed_by_tid`` are given, a radial m/s badge rides the dot.
 
     Dot radius scales with bbox width; a speed "stick" drives how far the dot reaches
@@ -1024,12 +1026,6 @@ def draw_joystick_dots(
         if team not in (0, 1):
             continue
         color = _team_color(team).as_bgr()
-        vx, vy = float(kf_vx[i]), float(kf_vy[i])
-        if not (np.isfinite(vx) and np.isfinite(vy)):
-            continue
-        speed = float(np.hypot(vx, vy))
-        if speed < DEFAULT_MIN_SPEED_PX:
-            continue
         x1, y1, x2, y2 = xyxy
         cx = (float(x1) + float(x2)) / 2.0
         cy = float(y2)
@@ -1038,11 +1034,19 @@ def draw_joystick_dots(
         b = 0.35 * a
         radius = _dot_radius_for_ellipse(a)
         px, py = cx, cy
-        stick = kalman_speed_stick(speed)
-        if stick is not None:
-            ux, uy = vx / speed, vy / speed
-            reach = _joystick_dot_reach(stick, a, b, ux, uy, dot_radius=float(radius))
-            px, py = cx + ux * reach, cy + uy * reach
+        vx, vy = float(kf_vx[i]), float(kf_vy[i])
+        if np.isfinite(vx) and np.isfinite(vy):
+            speed = float(np.hypot(vx, vy))
+            if speed >= DEFAULT_MIN_SPEED_PX:
+                stick = kalman_speed_stick(speed)
+                if stick is not None:
+                    ux, uy = vx / speed, vy / speed
+                    reach = _joystick_dot_reach(
+                        stick, a, b, ux, uy, dot_radius=float(radius),
+                    )
+                    px, py = cx + ux * reach, cy + uy * reach
+        else:
+            vx, vy = 0.0, 0.0
         tid = int(tids[i])
         if joystick_smoother is not None:
             px, py = joystick_smoother.smooth(tid, cx, cy, px, py)
