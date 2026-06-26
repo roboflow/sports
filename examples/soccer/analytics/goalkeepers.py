@@ -10,8 +10,6 @@ tracklet's team over the whole clip.
 Class-id note: this analytics package uses PLAYER_CLASS_ID=2 / GOALKEEPER_CLASS_ID=1
 (see ``analytics/class_ids.py``). Goal-side ids follow the sports pitch template: TEAM_LEFT=0
 defends x≈0, TEAM_RIGHT=1 defends x≈length.
-
-Canonical exports for stacked pass PR: ``infer_goal_defenders``, ``image_to_pitch_cm``.
 """
 
 from __future__ import annotations

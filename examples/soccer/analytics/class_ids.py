@@ -10,7 +10,7 @@ TEAM_NONE = -1
 TEAM_LEFT = 0
 TEAM_RIGHT = 1
 
-# Aliases used by ported possession / pass logic (historical SoccerNet names).
+# Role aliases used by possession and pass modules.
 ROLE_BALL = BALL_CLASS_ID
 ROLE_GOALKEEPER = GOALKEEPER_CLASS_ID
 ROLE_PLAYER = PLAYER_CLASS_ID

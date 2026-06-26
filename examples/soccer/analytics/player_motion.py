@@ -5,9 +5,6 @@ kinematics integration, team-classifier helpers, referee/goalkeeper hygiene,
 detector factories, and annotation helpers (ellipses, joystick dots, radar minimap,
 trace drawing). Does not own homography (see ``homography``), clip orchestration
 (see ``clip_pipeline``), or mode-specific render loops.
-
-Canonical exports for stacked pass PR: ``feet_xy``, ``player_mask``, ``draw_goals_on_pitch``,
-joystick/speed badge helpers (``draw_joystick_dots``, ``draw_speed_badge``, ``_draw_chip``).
 """
 
 from __future__ import annotations
