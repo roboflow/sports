@@ -8,6 +8,8 @@ from sklearn.cluster import KMeans
 from tqdm import tqdm
 from transformers import AutoProcessor, SiglipVisionModel
 
+from sports.configs.soccer import TEAM_NONE
+
 V = TypeVar("V")
 
 SIGLIP_MODEL_PATH = 'google/siglip-base-patch16-224'
@@ -110,3 +112,93 @@ class TeamClassifier:
         data = self.extract_features(crops)
         projections = self.reducer.transform(data)
         return self.cluster_model.predict(projections)
+
+
+def lock_teams_by_tracklet_majority(
+    frames: list[tuple[int, sv.Detections]],
+) -> dict[int, int]:
+    """Lock one team per tracker id using a majority shirt-colour vote.
+
+    Args:
+        frames: Sequence of ``(frame_idx, detections)`` pairs from a clip.
+
+    Returns:
+        Mapping of ``tracker_id`` to locked team id (0 or 1).
+    """
+    votes: dict[int, list[int]] = {}
+    for _, dets in frames:
+        if dets.tracker_id is None or dets.data is None:
+            continue
+        team = np.asarray(
+            dets.data.get("team", np.full(len(dets), TEAM_NONE)), dtype=int
+        )
+        for i, tid in enumerate(dets.tracker_id):
+            tid = int(tid)
+            if tid < 0:
+                continue
+            raw = int(team[i])
+            if raw in (0, 1):
+                votes.setdefault(tid, []).append(raw)
+
+    locked: dict[int, int] = {}
+    for tid, vals in votes.items():
+        counts = np.bincount(np.asarray(vals, dtype=int), minlength=2)
+        locked[tid] = int(np.argmax(counts))
+    return locked
+
+
+def apply_team_lock(
+    team_arr: np.ndarray,
+    tracker_id: np.ndarray | None,
+    team_lock: dict[int, int],
+) -> np.ndarray:
+    """Override team ids with a clip-level majority lock keyed on tracker id.
+
+    Args:
+        team_arr (np.ndarray): Per-detection team ids (modified in place).
+        tracker_id (np.ndarray | None): Per-detection tracker ids.
+        team_lock (dict[int, int]): Clip-level {tracker_id: team} mapping.
+
+    Returns:
+        np.ndarray: The updated team_arr.
+    """
+    if tracker_id is None or not team_lock:
+        return team_arr
+    for i, tid in enumerate(tracker_id):
+        tid = int(tid)
+        if tid in team_lock:
+            team_arr[i] = team_lock[tid]
+    return team_arr
+
+
+def relock_detection_teams(
+    dets: sv.Detections, team_lock: dict[int, int]
+) -> sv.Detections:
+    """Return detections with ``data['team']`` re-locked to the clip-level mapping.
+
+    Args:
+        dets: Input detections.
+        team_lock: Clip-level ``{tracker_id: team}`` mapping.
+
+    Returns:
+        New detections with updated team data, or ``dets`` unchanged when empty.
+    """
+    if not team_lock or dets.tracker_id is None or len(dets) == 0:
+        return dets
+    team = np.asarray(
+        dets.data.get("team", np.full(len(dets), TEAM_NONE))
+        if dets.data
+        else np.full(len(dets), TEAM_NONE),
+        dtype=int,
+    )
+    team = apply_team_lock(team, dets.tracker_id, team_lock)
+    data = dict(dets.data) if dets.data else {}
+    data["team"] = team
+    return sv.Detections(
+        xyxy=dets.xyxy,
+        class_id=dets.class_id,
+        tracker_id=dets.tracker_id,
+        confidence=dets.confidence,
+        data=data,
+    )
+
