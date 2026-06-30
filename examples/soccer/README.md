@@ -110,6 +110,17 @@ on the field.
 
   https://github.com/user-attachments/assets/263b4cd0-2185-4ed3-9be2-cf4d8f5bfa67
 
+### player-motion analytics
+
+- `DIRECTION` — Team-colored ground ellipses with a velocity joystick dot on each
+  player (centroid-based; no pitch homography).
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/renders/2e57b9_0-direction.mp4 \
+  --device mps --mode DIRECTION
+  ```
+
 ## 🗺️ roadmap
 
 - [ ] Add smoothing to eliminate flickering in RADAR mode.
