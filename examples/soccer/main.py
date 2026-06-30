@@ -3,11 +3,20 @@ from enum import Enum
 from typing import Iterator, List
 
 import os
+import sys
+from pathlib import Path
+
 import cv2
 import numpy as np
 import supervision as sv
 from tqdm import tqdm
 from ultralytics import YOLO
+
+# The `sports` library is not pip-installed in this checkout; it lives at the repo
+# root. Ensure that root is importable regardless of the current working directory.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if (_REPO_ROOT / "sports").is_dir() and str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
 from sports.common.ball import BallTracker, BallAnnotator
@@ -15,15 +24,23 @@ from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
 from sports.configs.soccer import SoccerPitchConfiguration
 
+from analytics.direction import run_direction
+from analytics.distance import run_distance
+from analytics.speed_and_distance import run_speed_and_distance
+from analytics.run_all import run_all
+from analytics.speed import run_speed
+
+from analytics.class_ids import (
+    BALL_CLASS_ID,
+    GOALKEEPER_CLASS_ID,
+    PLAYER_CLASS_ID,
+    REFEREE_CLASS_ID,
+)
+
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
 PITCH_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-pitch-detection.pt')
 BALL_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-ball-detection.pt')
-
-BALL_CLASS_ID = 0
-GOALKEEPER_CLASS_ID = 1
-PLAYER_CLASS_ID = 2
-REFEREE_CLASS_ID = 3
 
 STRIDE = 60
 CONFIG = SoccerPitchConfiguration()
@@ -80,6 +97,41 @@ class Mode(Enum):
     PLAYER_TRACKING = 'PLAYER_TRACKING'
     TEAM_CLASSIFICATION = 'TEAM_CLASSIFICATION'
     RADAR = 'RADAR'
+    # Player-motion analytics modes (implemented in the analytics/ helper package).
+    DIRECTION = 'DIRECTION'
+    SPEED = 'SPEED'
+    DISTANCE = 'DISTANCE'
+    SPEED_AND_DISTANCE = 'SPEED_AND_DISTANCE'
+    # In-process orchestrator: compute the shared pipeline once, render all of the above.
+    ALL = 'ALL'
+
+
+# Analytics modes are dispatched to the analytics/ helper modules (they manage their
+# own video IO), separately from the original generator-based modes above. ALL is the
+# in-process run-all orchestrator that shares one ClipAnalysis across every render.
+ANALYTICS_MODES = (
+    Mode.DIRECTION,
+    Mode.SPEED,
+    Mode.DISTANCE,
+    Mode.SPEED_AND_DISTANCE,
+    Mode.ALL,
+)
+
+
+def run_analytics_mode(mode: Mode, args: argparse.Namespace) -> None:
+    """Dispatch the player-motion analytics modes to the analytics/ helper modules."""
+    if mode == Mode.DIRECTION:
+        run_direction(args)
+    elif mode == Mode.SPEED:
+        run_speed(args)
+    elif mode == Mode.DISTANCE:
+        run_distance(args)
+    elif mode == Mode.SPEED_AND_DISTANCE:
+        run_speed_and_distance(args)
+    elif mode == Mode.ALL:
+        run_all(args)
+    else:
+        raise NotImplementedError(f"Mode {mode} is not an analytics mode.")
 
 
 def get_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
@@ -425,10 +477,53 @@ if __name__ == '__main__':
     parser.add_argument('--target_video_path', type=str, required=True)
     parser.add_argument('--device', type=str, default='cpu')
     parser.add_argument('--mode', type=Mode, default=Mode.PLAYER_DETECTION)
+
+    # ── flags for the analytics modes (DIRECTION / SPEED / DISTANCE / SPEED_AND_DISTANCE) ──
+    # These are optional and unused by the original six modes, so their defaults keep
+    # the existing behavior unchanged.
+    parser.add_argument('--max-frames', dest='max_frames', type=int, default=None,
+                        help='(analytics) Cap frames processed (None = all)')
+    parser.add_argument('--tracker', default='botsort',
+                        choices=('bytetrack', 'botsort', 'botsort_nocmc'),
+                        help='(analytics) Multi-object tracker backend')
+    parser.add_argument('--player-detector', dest='player_detector', default='yolo',
+                        choices=('yolo', 'inference'),
+                        help='(analytics) Player detection backend')
+    parser.add_argument('--pitch-detector', dest='pitch_detector', default='yolo',
+                        choices=('yolo', 'inference'),
+                        help='(analytics) Pitch keypoint detection backend')
+    parser.add_argument('--player-model-path', dest='player_model_path', default=None,
+                        help='(analytics) Path to YOLO player detection .pt')
+    parser.add_argument('--pitch-model-path', dest='pitch_model_path', default=None,
+                        help='(analytics) Path to YOLO pitch keypoint .pt')
+    parser.add_argument('--player-model-id', dest='player_model_id',
+                        default='football-players-detection-3zvbc/11',
+                        help='(analytics) Roboflow Inference model id for player detection')
+    parser.add_argument('--pitch-model-id', dest='pitch_model_id',
+                        default='football-field-detection-f07vi/15',
+                        help='(analytics) Roboflow Inference model id for pitch keypoints')
+    parser.add_argument('--api-key', dest='api_key', default=None,
+                        help='(analytics) Roboflow API key (also read from ROBOFLOW_API_KEY)')
+    parser.add_argument('--track-id', dest='track_id', type=int, default=None,
+                        help='(analytics, SPEED_AND_DISTANCE) Spotlight one tracker id; omit to follow all')
+    parser.add_argument('--show-track-ids', dest='show_track_ids', action='store_true',
+                        help='(analytics, SPEED) Show tracker ID chips on players (combine with speed badges)')
+    parser.add_argument('--cache', dest='cache', action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help='(analytics) Cache per-frame detections + pitch keypoints on disk '
+                             'and reuse them on later runs (default on; use --no-cache to disable)')
+    parser.add_argument('--cache-dir', dest='cache_dir', default=None,
+                        help='(analytics) Directory for the on-disk cache '
+                             '(default: examples/soccer/data/cache)')
+
     args = parser.parse_args()
-    main(
-        source_video_path=args.source_video_path,
-        target_video_path=args.target_video_path,
-        device=args.device,
-        mode=args.mode
-    )
+
+    if args.mode in ANALYTICS_MODES:
+        run_analytics_mode(args.mode, args)
+    else:
+        main(
+            source_video_path=args.source_video_path,
+            target_video_path=args.target_video_path,
+            device=args.device,
+            mode=args.mode
+        )
