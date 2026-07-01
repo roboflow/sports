@@ -22,22 +22,6 @@ def _kalman_feet_velocity_from_tracklet(tracklet):
     return np.array([vx, vy], dtype=np.float64)
 
 
-def _kalman_velocity_by_tracker_id(tracker, min_speed: float = DEFAULT_MIN_SPEED_PX):
-    """Map confirmed tracker_id to feet-referenced Kalman velocity."""
-    out = {}
-    for tracklet in tracker.tracks:
-        tid = int(tracklet.tracker_id)
-        if tid < 0:
-            continue
-        vel = _kalman_feet_velocity_from_tracklet(tracklet)
-        if vel is None:
-            continue
-        if float(np.linalg.norm(vel)) < min_speed:
-            continue
-        out[tid] = vel
-    return out
-
-
 def kalman_velocity_arrays(
     detections: sv.Detections,
     tracker,
@@ -49,7 +33,19 @@ def kalman_velocity_arrays(
     kf_vy = np.full(n, np.nan, dtype=np.float32)
     if n == 0 or detections.tracker_id is None:
         return kf_vx, kf_vy
-    id_to_vel = _kalman_velocity_by_tracker_id(tracker, min_speed=min_speed)
+
+    id_to_vel = {}
+    for tracklet in tracker.tracks:
+        tid = int(tracklet.tracker_id)
+        if tid < 0:
+            continue
+        vel = _kalman_feet_velocity_from_tracklet(tracklet)
+        if vel is None:
+            continue
+        if float(np.linalg.norm(vel)) < min_speed:
+            continue
+        id_to_vel[tid] = vel
+
     for i, tid in enumerate(detections.tracker_id):
         vel = id_to_vel.get(int(tid))
         if vel is None:
