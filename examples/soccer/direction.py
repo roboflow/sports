@@ -2,25 +2,28 @@ import cv2
 import supervision as sv
 
 from sports.annotators.motion import annotate_team_ellipses, draw_joystick_dots
-from sports.common.clip import ClipAnalysis, compute_clip_analysis
 from sports.common.kinematics import JoystickDotSmoother, KalmanVelocitySmoother
 from sports.common.tracking import open_video
+from sports.common.video_tracking import (
+    VideoTrackingSession,
+    build_video_tracking_session,
+)
 
 
-def run_direction(args, analysis=None) -> None:
+def run_direction(args, session=None) -> None:
     """Render team-colored ellipses and image-space Kalman direction dots."""
-    if analysis is None:
-        analysis = compute_clip_analysis(args)
-    _render_direction(args, analysis)
+    if session is None:
+        session = build_video_tracking_session(args)
+    _render_direction(args, session)
 
 
-def _render_direction(args, analysis: ClipAnalysis) -> None:
-    """Draw direction overlays using precomputed clip tracking."""
-    fps, width, height = analysis.fps, analysis.width, analysis.height
-    locks = analysis.locks()
+def _render_direction(args, session: VideoTrackingSession) -> None:
+    """Draw direction overlays using precomputed video tracking."""
+    fps, width, height = session.fps, session.width, session.height
+    locks = session.team_locks(gk_assignment="centroid")
     vel_smoother = KalmanVelocitySmoother(alpha=0.3)
     joy_smoother = JoystickDotSmoother(alpha=0.32)
-    tracked_lookup = analysis.tracked_by_frame()
+    tracked_lookup = session.tracked_by_frame()
 
     cap, _, _, _ = open_video(args.source_video_path)
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -38,8 +41,12 @@ def _render_direction(args, analysis: ClipAnalysis) -> None:
                 tracked = tracked_lookup.get(frame_idx)
                 if tracked is None:
                     tracked = sv.Detections.empty()
-                dets = analysis.decorate_replay_frame(
-                    frame_idx, tracked, locks=locks, vel_smoother=vel_smoother,
+                dets = session.apply_replay_teams(
+                    frame_idx,
+                    tracked,
+                    gk_assignment="centroid",
+                    locks=locks,
+                    vel_smoother=vel_smoother,
                 )
 
                 annotated = frame.copy()
