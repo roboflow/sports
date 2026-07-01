@@ -12,6 +12,13 @@ from sports.configs.soccer import (
 TEAM_COLORS = [sv.Color.from_hex("#FF1493"), sv.Color.from_hex("#00BFFF")]
 NEUTRAL_COLOR = sv.Color.from_hex("#CCCCCC")
 
+# Matches examples/soccer/main.py COLORS / ELLIPSE_ANNOTATOR setup.
+_MOTION_ELLIPSE_COLORS = ["#FF1493", "#00BFFF", "#FF6347", "#FFD700"]
+_MOTION_ELLIPSE_ANNOTATOR = sv.EllipseAnnotator(
+    color=sv.ColorPalette.from_hex(_MOTION_ELLIPSE_COLORS),
+    thickness=2,
+)
+
 JOYSTICK_MIN_SPEED_PX = 0.5
 JOYSTICK_MAX_SPEED_PX = 4.0
 JOYSTICK_ELLIPSE_THICKNESS = 2.0
@@ -21,6 +28,35 @@ def _team_color(team: int) -> sv.Color:
     if team in (0, 1):
         return TEAM_COLORS[team]
     return NEUTRAL_COLOR
+
+
+def team_ellipse_color_lookup(detections: sv.Detections) -> np.ndarray:
+    """Map each detection row to the main.py ellipse palette index."""
+    n = len(detections)
+    lookup = np.full(n, 2, dtype=int)
+    if n == 0 or detections.data is None:
+        return lookup
+    teams = detections.data.get("team", np.full(n, TEAM_NONE))
+    for i in range(n):
+        if int(detections.class_id[i]) == REFEREE_CLASS_ID:
+            lookup[i] = REFEREE_CLASS_ID
+        elif int(teams[i]) in (0, 1):
+            lookup[i] = int(teams[i])
+    return lookup
+
+
+def annotate_team_ellipses(
+    frame: np.ndarray,
+    detections: sv.Detections,
+) -> np.ndarray:
+    """Draw team ellipses via sv.EllipseAnnotator (same geometry as main.py)."""
+    if len(detections) == 0:
+        return frame
+    return _MOTION_ELLIPSE_ANNOTATOR.annotate(
+        scene=frame,
+        detections=detections,
+        custom_color_lookup=team_ellipse_color_lookup(detections),
+    )
 
 
 def _dot_radius_for_ellipse(semi_axis_a: float) -> int:

@@ -1,8 +1,7 @@
 import cv2
 import supervision as sv
 
-from sports.annotators.motion import draw_joystick_dots
-from sports.annotators.player import annotate_team_ellipses
+from sports.annotators.motion import annotate_team_ellipses, draw_joystick_dots
 from sports.common.clip import ClipAnalysis, compute_clip_analysis
 from sports.common.kinematics import JoystickDotSmoother, KalmanVelocitySmoother
 from sports.common.tracking import open_video
