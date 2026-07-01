@@ -10,7 +10,6 @@ from sports.configs.soccer import (
 )
 
 TEAM_COLORS = [sv.Color.from_hex("#FF1493"), sv.Color.from_hex("#00BFFF")]
-REFEREE_COLOR = sv.Color.from_hex("#FFD700")
 NEUTRAL_COLOR = sv.Color.from_hex("#CCCCCC")
 
 JOYSTICK_MIN_SPEED_PX = 0.5
@@ -22,41 +21,6 @@ def _team_color(team: int) -> sv.Color:
     if team in (0, 1):
         return TEAM_COLORS[team]
     return NEUTRAL_COLOR
-
-
-def draw_team_ellipses(
-    frame: np.ndarray,
-    detections: sv.Detections,
-    thickness: int = 2,
-) -> None:
-    """Draw ground-contact ellipses colored by team."""
-    if len(detections) == 0 or detections.data is None:
-        return
-    teams = detections.data.get("team", np.full(len(detections), TEAM_NONE))
-    for i, xyxy in enumerate(detections.xyxy):
-        class_id = int(detections.class_id[i])
-        team = int(teams[i])
-        if class_id == REFEREE_CLASS_ID:
-            color = REFEREE_COLOR
-        else:
-            color = _team_color(team)
-        x1, y1, x2, y2 = xyxy
-        width = float(x2 - x1)
-        cx = int((x1 + x2) / 2)
-        cy = int(y2)
-        rx = max(int(width), 1)
-        ry = max(int(0.35 * width), 1)
-        cv2.ellipse(
-            frame,
-            (cx, cy),
-            (rx, ry),
-            0.0,
-            -45,
-            235,
-            color.as_bgr(),
-            thickness,
-            cv2.LINE_AA,
-        )
 
 
 def _dot_radius_for_ellipse(semi_axis_a: float) -> int:

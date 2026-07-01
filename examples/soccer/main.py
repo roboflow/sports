@@ -16,6 +16,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if (_REPO_ROOT / "sports").is_dir() and str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from sports.annotators.player import ELLIPSE_ANNOTATOR
 from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
 from sports.common.ball import BallTracker, BallAnnotator
 from sports.common.team import TeamClassifier
@@ -58,10 +59,6 @@ TRIANGLE_ANNOTATOR = sv.TriangleAnnotator(
     height=15,
 )
 BOX_ANNOTATOR = sv.BoxAnnotator(
-    color=sv.ColorPalette.from_hex(COLORS),
-    thickness=2
-)
-ELLIPSE_ANNOTATOR = sv.EllipseAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
     thickness=2
 )
