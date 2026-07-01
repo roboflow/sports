@@ -2,35 +2,14 @@
 
 ## 💻 install
 
-Use a conda environment with **Python >= 3.8**.
-Any env name works (for example `sports-dev`).
+We don't have a Python package yet. Install from source in a
+[**Python>=3.8**](https://www.python.org/) environment.
 
 ```bash
-conda create -n sports python=3.12 -y
-conda activate sports
-
-git clone https://github.com/roboflow/sports.git
-cd sports
-pip install -e .
-pip install "numpy>=1.26,<2.1"
+pip install git+https://github.com/roboflow/sports.git
 cd examples/soccer
 pip install -r requirements.txt
 ./setup.sh
-```
-
-The editable install (`pip install -e .`) puts the `sports` package on your path.
-Run all example scripts from `examples/soccer` — no `sys.path` setup required.
-
-`examples/soccer/requirements.txt` pulls in example-only deps (Ultralytics, trackers, etc.).
-The trackers PyPI wheel is missing module files, so requirements installs it from GitHub.
-UMAP/numba need NumPy < 2.1; pin as shown if your env has a newer NumPy.
-
-```bash
-conda activate sports
-cd examples/soccer
-python main.py --source_video_path data/2e57b9_0.mp4 \
-  --target_video_path data/renders/sample.mp4 \
-  --device cpu --mode PLAYER_DETECTION
 ```
 
 ## ⚽ datasets
