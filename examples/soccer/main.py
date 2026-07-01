@@ -3,8 +3,6 @@ from enum import Enum
 from typing import Iterator, List
 
 import os
-import sys
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -12,15 +10,7 @@ import supervision as sv
 from tqdm import tqdm
 from ultralytics import YOLO
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-if (_REPO_ROOT / "sports").is_dir() and str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-from sports.annotators.soccer import (
-    draw_pitch,
-    draw_points_on_pitch,
-    player_ellipse_annotator,
-)
+from sports.annotators.soccer import draw_pitch, draw_points_on_pitch, player_ellipse_annotator
 from sports.common.ball import BallTracker, BallAnnotator
 from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
