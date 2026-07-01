@@ -25,6 +25,7 @@ from sports.configs.soccer import (
 )
 
 from direction import run_direction
+from speed import run_speed
 
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
@@ -84,14 +85,17 @@ class Mode(Enum):
     TEAM_CLASSIFICATION = 'TEAM_CLASSIFICATION'
     RADAR = 'RADAR'
     DIRECTION = 'DIRECTION'
+    SPEED = 'SPEED'
 
 
-ANALYTICS_MODES = (Mode.DIRECTION,)
+ANALYTICS_MODES = (Mode.DIRECTION, Mode.SPEED)
 
 
 def run_analytics_mode(mode: Mode, args: argparse.Namespace) -> None:
     if mode == Mode.DIRECTION:
         run_direction(args)
+    elif mode == Mode.SPEED:
+        run_speed(args)
     else:
         raise NotImplementedError(f"Mode {mode} is not an analytics mode.")
 
