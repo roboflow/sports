@@ -16,7 +16,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if (_REPO_ROOT / "sports").is_dir() and str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
+from sports.annotators.soccer import (
+    draw_pitch,
+    draw_points_on_pitch,
+    player_ellipse_annotator,
+)
 from sports.common.ball import BallTracker, BallAnnotator
 from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
@@ -24,6 +28,7 @@ from sports.configs.soccer import (
     BALL_CLASS_ID,
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
+    PLAYER_VIS_COLORS,
     REFEREE_CLASS_ID,
     SoccerPitchConfiguration,
 )
@@ -38,7 +43,7 @@ BALL_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-ball-detecti
 STRIDE = 60
 CONFIG = SoccerPitchConfiguration()
 
-COLORS = ['#FF1493', '#00BFFF', '#FF6347', '#FFD700']
+COLORS = PLAYER_VIS_COLORS
 VERTEX_LABEL_ANNOTATOR = sv.VertexLabelAnnotator(
     color=[sv.Color.from_hex(color) for color in CONFIG.colors],
     text_color=sv.Color.from_hex('#FFFFFF'),
@@ -61,10 +66,7 @@ BOX_ANNOTATOR = sv.BoxAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
     thickness=2
 )
-ELLIPSE_ANNOTATOR = sv.EllipseAnnotator(
-    color=sv.ColorPalette.from_hex(COLORS),
-    thickness=2
-)
+ELLIPSE_ANNOTATOR = player_ellipse_annotator
 BOX_LABEL_ANNOTATOR = sv.LabelAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
     text_color=sv.Color.from_hex('#FFFFFF'),
