@@ -1,5 +1,5 @@
 from typing import Generator, Iterable, List, TypeVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import supervision as sv
@@ -25,8 +25,6 @@ class TeamLocks:
     """Clip-level team lock for direction mode."""
 
     team_lock: dict
-    gk_lock: dict = field(default_factory=dict)
-    locked_goal_defenders: tuple = None
 
 
 def create_batches(

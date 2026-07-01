@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Callable
 
 import numpy as np
 import supervision as sv
@@ -31,7 +31,6 @@ DEFAULT_PLAYER_MODEL_ID = "football-players-detection-3zvbc/11"
 class VideoTrackingSession:
     """Shared tracking groundwork for analytics-mode renders."""
 
-    args: Any
     source_video_path: str
     fps: float
     width: int
@@ -47,19 +46,16 @@ class VideoTrackingSession:
     referee_frames: list
     blocked_ids: frozenset
 
-    _locks: dict = field(default_factory=dict, repr=False)
+    _team_lock: TeamLocks | None = field(default=None, repr=False)
 
-    def team_locks(self, *, gk_assignment: str = "centroid") -> TeamLocks:
-        """Return clip-level team locks, cached per goalkeeper assignment."""
-        if gk_assignment != "centroid":
-            raise NotImplementedError(
-                f"goalkeeper assignment {gk_assignment!r} is not implemented yet"
-            )
-        if gk_assignment not in self._locks:
+    def team_locks(self) -> TeamLocks:
+        """Return clip-level team locks, cached."""
+        if self._team_lock is None:
             cloned = clone_team_frames(self.frames)
-            team_lock = derive_tracklet_team_lock(cloned)
-            self._locks[gk_assignment] = TeamLocks(team_lock=team_lock)
-        return self._locks[gk_assignment]
+            self._team_lock = TeamLocks(
+                team_lock=derive_tracklet_team_lock(cloned),
+            )
+        return self._team_lock
 
     def iter_tracked(self):
         """Yield frame_idx and tracked detections with blocked ids removed."""
@@ -72,19 +68,12 @@ class VideoTrackingSession:
 
     def apply_replay_teams(
         self,
-        frame_idx: int,
         tracked: sv.Detections,
         *,
-        gk_assignment: str,
         locks: TeamLocks,
         vel_smoother,
     ) -> sv.Detections:
         """Apply team lock and centroid goalkeeper assignment to a replay frame."""
-        del frame_idx  # reserved for goal-distance assignment in a later PR
-        if gk_assignment != "centroid":
-            raise NotImplementedError(
-                f"goalkeeper assignment {gk_assignment!r} is not implemented yet"
-            )
         team_arr = (
             np.array(tracked.data.get("team"), dtype=int)
             if tracked.data and tracked.data.get("team") is not None
@@ -128,13 +117,8 @@ def _create_player_detector_factory(args) -> Callable:
     return _factory
 
 
-def build_video_tracking_session(
-    args, *, need_homography: bool = False
-) -> VideoTrackingSession:
+def build_video_tracking_session(args) -> VideoTrackingSession:
     """Run shared analytics groundwork once and return a VideoTrackingSession."""
-    if need_homography:
-        raise NotImplementedError("pitch homography is not implemented yet")
-
     _, fps, width, height = open_video(args.source_video_path)
     max_frames = getattr(args, "max_frames", None)
     tracker_kind = getattr(args, "tracker", "botsort")
@@ -180,7 +164,6 @@ def build_video_tracking_session(
     blocked_ids = collect_referee_tracker_ids(referee_frames)
 
     return VideoTrackingSession(
-        args=args,
         source_video_path=args.source_video_path,
         fps=fps,
         width=width,

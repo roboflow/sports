@@ -20,7 +20,7 @@ def run_direction(args, session=None) -> None:
 def _render_direction(args, session: VideoTrackingSession) -> None:
     """Draw direction overlays using precomputed video tracking."""
     fps, width, height = session.fps, session.width, session.height
-    locks = session.team_locks(gk_assignment="centroid")
+    locks = session.team_locks()
     vel_smoother = KalmanVelocitySmoother(alpha=0.3)
     joy_smoother = JoystickDotSmoother(alpha=0.32)
     tracked_lookup = session.tracked_by_frame()
@@ -42,9 +42,7 @@ def _render_direction(args, session: VideoTrackingSession) -> None:
                 if tracked is None:
                     tracked = sv.Detections.empty()
                 dets = session.apply_replay_teams(
-                    frame_idx,
                     tracked,
-                    gk_assignment="centroid",
                     locks=locks,
                     vel_smoother=vel_smoother,
                 )
