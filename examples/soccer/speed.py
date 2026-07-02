@@ -70,7 +70,7 @@ def run_speed(args, session=None) -> None:
 
 def _speed_by_tid(
     dets: sv.Detections,
-    transformer,
+    transformer: ViewTransformer | None,
     fps: float,
     speed_smoother: KalmanSpeedDisplaySmoother,
 ) -> dict[int, float]:

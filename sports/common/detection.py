@@ -25,11 +25,11 @@ DEFAULT_PITCH_MODEL_ID = "football-field-detection-f07vi/15"
 
 
 def create_pitch_keypoint_detector(
-    *,
     backend: str = "yolo",
     model_path: str | None = None,
     model_id: str = DEFAULT_PITCH_MODEL_ID,
     device: str = "cpu",
+    threshold: float = 0.3,
     api_key: str | None = None,
 ) -> Callable[[np.ndarray], sv.KeyPoints]:
     """Return a callable(frame_bgr) -> sv.KeyPoints for pitch keypoint detection."""
@@ -38,7 +38,9 @@ def create_pitch_keypoint_detector(
         model = YOLO(str(path)).to(device=device)
 
         def _kp_yolo(frame: np.ndarray) -> sv.KeyPoints:
-            result = model.predict(frame, conf=0.3, verbose=False, device=device)[0]
+            result = model.predict(
+                frame, conf=threshold, verbose=False, device=device
+            )[0]
             return sv.KeyPoints.from_ultralytics(result)
 
         return _kp_yolo
@@ -54,7 +56,7 @@ def create_pitch_keypoint_detector(
         model = get_model(model_id=model_id, api_key=key)
 
         def _kp_inf(frame: np.ndarray) -> sv.KeyPoints:
-            result = model.infer(frame, confidence=0.3)[0]
+            result = model.infer(frame, confidence=threshold)[0]
             return keypoints_from_inference_field(result)
 
         return _kp_inf

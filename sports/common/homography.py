@@ -9,7 +9,9 @@ from sports.common.view import ViewTransformer
 from sports.configs.soccer import SoccerPitchConfiguration
 
 HOMOGRAPHY_RANSAC_REPROJ_THRESH = 10.0
+# Post-fit mean reprojection gate for m/s homography (slightly above RANSAC thresh).
 SPEED_GATE_MAX_REPROJ_PX = 11.0
+# Reject a gated fit when pitch-space mapping jumps more than this between frames.
 SPEED_GATE_MAX_JUMP_CM = 600.0
 DISPLAY_MIN_KEYPOINTS = 4
 PITCH_CONFIG = SoccerPitchConfiguration()

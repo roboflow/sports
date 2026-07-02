@@ -12,9 +12,16 @@ from ultralytics import YOLO
 
 from sports.annotators.soccer import draw_pitch, draw_points_on_pitch, player_ellipse_annotator
 from sports.common.ball import BallTracker, BallAnnotator
-from sports.common.detection import PITCH_DETECTION_MODEL_PATH
+from sports.common.detection import (
+    DEFAULT_PITCH_MODEL_ID,
+    PITCH_DETECTION_MODEL_PATH,
+)
 from sports.common.team import TeamClassifier
-from sports.common.tracking import get_crops, resolve_goalkeepers_team_id
+from sports.common.tracking import (
+    DEFAULT_PLAYER_MODEL_ID,
+    get_crops,
+    resolve_goalkeepers_team_id,
+)
 from sports.common.view import ViewTransformer
 from sports.configs.soccer import (
     BALL_CLASS_ID,
@@ -413,10 +420,10 @@ if __name__ == '__main__':
     parser.add_argument('--pitch-model-path', dest='pitch_model_path', default=None,
                         help='(analytics) Path to YOLO pitch keypoint .pt (SPEED mode)')
     parser.add_argument('--player-model-id', dest='player_model_id',
-                        default='football-players-detection-3zvbc/11',
+                        default=DEFAULT_PLAYER_MODEL_ID,
                         help='(analytics) Roboflow Inference model id for player detection')
     parser.add_argument('--pitch-model-id', dest='pitch_model_id',
-                        default='football-field-detection-f07vi/15',
+                        default=DEFAULT_PITCH_MODEL_ID,
                         help='(analytics) Roboflow Inference model id for pitch keypoints (SPEED mode)')
     parser.add_argument('--api-key', dest='api_key', default=None,
                         help='(analytics) Roboflow API key (also read from ROBOFLOW_API_KEY)')
