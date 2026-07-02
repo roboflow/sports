@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Tuple
 
 import cv2
@@ -14,14 +13,6 @@ SPEED_GATE_MAX_REPROJ_PX = 11.0
 SPEED_GATE_MAX_JUMP_CM = 600.0
 DISPLAY_MIN_KEYPOINTS = 4
 PITCH_CONFIG = SoccerPitchConfiguration()
-
-
-@dataclass
-class HomographyGateState:
-    """Mutable state for sequence-stable homography gating across frames."""
-
-    locked: Optional[ViewTransformer] = None
-    last_was_accept: bool = False
 
 
 class RansacViewTransformer(ViewTransformer):
@@ -170,6 +161,26 @@ def keypoints_from_inference_field(
     return sv.KeyPoints(xy=xy, confidence=conf)
 
 
+def _pitch_correspondences(
+    keypoints: Optional[sv.KeyPoints],
+    *,
+    config: SoccerPitchConfiguration = PITCH_CONFIG,
+    confidence: float = 0.9,
+    min_keypoints: int = DISPLAY_MIN_KEYPOINTS,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Return accepted image and pitch point pairs for one frame."""
+    if keypoints is None or keypoints.xy.shape[0] == 0:
+        return None
+    n = pitch_vertex_count(config)
+    xy, conf = align_pitch_keypoints(keypoints, n_vertices=n)
+    mask = pitch_keypoint_accept_mask(xy, conf, confidence=confidence)
+    if mask.sum() < min_keypoints:
+        return None
+    src = xy[mask].astype(np.float32)
+    dst = np.array(config.vertices, dtype=np.float32)[mask]
+    return src, dst
+
+
 def fit_pitch_homography(
     keypoints: Optional[sv.KeyPoints],
     config: SoccerPitchConfiguration = PITCH_CONFIG,
@@ -177,16 +188,9 @@ def fit_pitch_homography(
     min_keypoints: int = DISPLAY_MIN_KEYPOINTS,
     use_ransac: bool = False,
     ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
-    gate_state: Optional[HomographyGateState] = None,
-    max_reproj_px: float = SPEED_GATE_MAX_REPROJ_PX,
-    max_jump_cm: float = SPEED_GATE_MAX_JUMP_CM,
 ) -> Optional[ViewTransformer]:
     """
     Fit image-to-pitch homography from pitch keypoints for one frame.
-
-    When ``gate_state`` is None, returns the per-frame fit (ungated). When
-    ``gate_state`` is provided, applies reprojection and jump gating for speed
-    metrics and mutates ``gate_state`` in place.
 
     Args:
         keypoints (Optional[sv.KeyPoints]): Pitch keypoints for one frame.
@@ -195,72 +199,28 @@ def fit_pitch_homography(
         min_keypoints (int): Minimum accepted keypoints required to fit.
         use_ransac (bool): Whether to use RANSAC during fitting.
         ransac_thresh (float): RANSAC reprojection threshold in pixels.
-        gate_state (Optional[HomographyGateState]): Sequence gate state for m/s.
-        max_reproj_px (float): Max mean reprojection error to accept a gated fit.
-        max_jump_cm (float): Max pitch-space jump between consecutive accepts.
 
     Returns:
-        Optional[ViewTransformer]: Fitted homography, or None when fitting fails
-            or the frame fails the gate.
+        Optional[ViewTransformer]: Fitted homography, or None when fitting fails.
     """
-    if keypoints is None or keypoints.xy.shape[0] == 0:
-        if gate_state is not None:
-            gate_state.last_was_accept = False
+    pts = _pitch_correspondences(
+        keypoints,
+        config=config,
+        confidence=confidence,
+        min_keypoints=min_keypoints,
+    )
+    if pts is None:
         return None
-    n = pitch_vertex_count(config)
-    xy, conf = align_pitch_keypoints(keypoints, n_vertices=n)
-    mask = pitch_keypoint_accept_mask(xy, conf, confidence=confidence)
-    if mask.sum() < min_keypoints:
-        if gate_state is not None:
-            gate_state.last_was_accept = False
-        return None
-    src = xy[mask].astype(np.float32)
-    dst = np.array(config.vertices, dtype=np.float32)[mask]
-
-    if gate_state is None:
-        try:
-            return RansacViewTransformer(
-                source=src,
-                target=dst,
-                use_ransac=use_ransac,
-                ransac_thresh=ransac_thresh,
-            )
-        except ValueError:
-            return None
-
+    src, dst = pts
     try:
-        candidate = RansacViewTransformer(
+        return RansacViewTransformer(
             source=src,
             target=dst,
-            use_ransac=True,
+            use_ransac=use_ransac,
             ransac_thresh=ransac_thresh,
         )
     except ValueError:
-        gate_state.last_was_accept = False
         return None
-
-    err = _mean_reproj_px(candidate, src, dst)
-    if err <= max_reproj_px:
-        if (
-            gate_state.locked is not None
-            and gate_state.last_was_accept
-            and _homography_jump_cm(gate_state.locked, candidate, src) > max_jump_cm
-        ):
-            gate_state.last_was_accept = False
-            return None
-        gate_state.locked = candidate
-        gate_state.last_was_accept = True
-        return candidate
-
-    gate_state.last_was_accept = False
-    if gate_state.locked is None:
-        try:
-            gate_state.locked = RansacViewTransformer(
-                source=src, target=dst, use_ransac=False
-            )
-        except ValueError:
-            pass
-    return None
 
 
 def _mean_reproj_px(
@@ -299,20 +259,57 @@ def replay_gated_transforms(
     confidence: float = 0.9,
     max_reproj_px: float = SPEED_GATE_MAX_REPROJ_PX,
     max_jump_cm: float = SPEED_GATE_MAX_JUMP_CM,
+    ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
     config: SoccerPitchConfiguration = PITCH_CONFIG,
 ) -> dict[int, ViewTransformer | None]:
     """Re-derive gated speed homographies from cached keypoints."""
-    gate_state = HomographyGateState()
+    locked: ViewTransformer | None = None
+    last_was_accept = False
     transforms: dict[int, ViewTransformer | None] = {}
     for frame_idx in sorted(int(fi) for fi in keypoints_by_frame):
-        transforms[frame_idx] = fit_pitch_homography(
-            keypoints_by_frame.get(frame_idx),
-            config=config,
-            confidence=confidence,
-            gate_state=gate_state,
-            max_reproj_px=max_reproj_px,
-            max_jump_cm=max_jump_cm,
-        )
+        kps = keypoints_by_frame.get(frame_idx)
+        pts = _pitch_correspondences(kps, config=config, confidence=confidence)
+        if pts is None:
+            last_was_accept = False
+            transforms[frame_idx] = None
+            continue
+        src, dst = pts
+        try:
+            candidate = RansacViewTransformer(
+                source=src,
+                target=dst,
+                use_ransac=True,
+                ransac_thresh=ransac_thresh,
+            )
+        except ValueError:
+            last_was_accept = False
+            transforms[frame_idx] = None
+            continue
+
+        err = _mean_reproj_px(candidate, src, dst)
+        if err <= max_reproj_px:
+            if (
+                locked is not None
+                and last_was_accept
+                and _homography_jump_cm(locked, candidate, src) > max_jump_cm
+            ):
+                last_was_accept = False
+                transforms[frame_idx] = None
+                continue
+            locked = candidate
+            last_was_accept = True
+            transforms[frame_idx] = candidate
+            continue
+
+        last_was_accept = False
+        if locked is None:
+            try:
+                locked = RansacViewTransformer(
+                    source=src, target=dst, use_ransac=False
+                )
+            except ValueError:
+                pass
+        transforms[frame_idx] = None
     return transforms
 
 
