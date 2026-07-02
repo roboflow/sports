@@ -30,6 +30,8 @@ PLAYER_DETECTION_MODEL_PATH = str(
     / "football-player-detection.pt"
 )
 
+DEFAULT_PLAYER_MODEL_ID = "football-players-detection-3zvbc/11"
+
 DEFAULT_TRACK_ACTIVATION_THRESHOLD = 0.55
 DEFAULT_HIGH_CONF_DET_THRESHOLD = 0.6
 DEFAULT_MINIMUM_IOU_THRESHOLD_FIRST_ASSOC = 0.15
@@ -285,7 +287,7 @@ def drop_blocked_tracker_ids(dets: sv.Detections, blocked_tracker_ids) -> sv.Det
 def create_player_detector(
     backend: str = "yolo",
     model_path=None,
-    model_id: str = "football-players-detection-3zvbc/11",
+    model_id: str = DEFAULT_PLAYER_MODEL_ID,
     device: str = "cpu",
     threshold: float = 0.5,
     api_key=None,

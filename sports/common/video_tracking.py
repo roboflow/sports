@@ -26,6 +26,7 @@ from sports.common.team import (
     relock_detection_teams,
 )
 from sports.common.tracking import (
+    DEFAULT_PLAYER_MODEL_ID,
     collect_referee_tracker_ids,
     collect_team_frames,
     create_player_detector,
@@ -36,8 +37,6 @@ from sports.common.tracking import (
     resolve_goalkeepers_team_id,
 )
 from sports.configs.soccer import GOALKEEPER_CLASS_ID, PLAYER_CLASS_ID, TEAM_NONE
-
-DEFAULT_PLAYER_MODEL_ID = "football-players-detection-3zvbc/11"
 
 
 @dataclass
@@ -75,9 +74,7 @@ class VideoTrackingSession:
             )
         return self._team_lock
 
-    @property
-    def speed_transforms_by_frame(self) -> dict:
-        """Gated speed homography per frame."""
+    def _gated_speed_transforms(self) -> dict:
         if self._speed_transforms is None:
             if not self.kp_by_frame:
                 raise RuntimeError("pitch keypoints were not computed for this session")
@@ -91,8 +88,8 @@ class VideoTrackingSession:
             if not self.kp_by_frame:
                 raise RuntimeError("pitch keypoints were not computed for this session")
             self._gap_filled_transforms = gap_fill_speed_transforms(
-                self.speed_transforms_by_frame,
-                self.kp_by_frame,
+                self._gated_speed_transforms(),
+                self.minimap_transforms_by_frame,
             )
         return self._gap_filled_transforms
 

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -170,34 +170,6 @@ def keypoints_from_inference_field(
     return sv.KeyPoints(xy=xy, confidence=conf)
 
 
-def valid_pitch_cm(
-    xy: np.ndarray,
-    config: SoccerPitchConfiguration = PITCH_CONFIG,
-    margin_cm: float = 200.0,
-) -> np.ndarray:
-    """
-    Return a mask for warped points inside the pitch rectangle.
-
-    Args:
-        xy (np.ndarray): Pitch-space points in centimeters.
-        config (SoccerPitchConfiguration): Pitch configuration.
-        margin_cm (float): Inset margin from pitch edges.
-
-    Returns:
-        np.ndarray: Boolean mask aligned with xy rows.
-    """
-    if xy is None or len(xy) == 0:
-        return np.zeros(0, dtype=bool)
-    finite = np.isfinite(xy).all(axis=1)
-    return (
-        finite
-        & (xy[:, 0] >= margin_cm)
-        & (xy[:, 0] <= config.length - margin_cm)
-        & (xy[:, 1] >= margin_cm)
-        & (xy[:, 1] <= config.width - margin_cm)
-    )
-
-
 def fit_pitch_homography(
     keypoints: Optional[sv.KeyPoints],
     config: SoccerPitchConfiguration = PITCH_CONFIG,
@@ -361,19 +333,13 @@ def build_minimap_transform_map(
 
 def gap_fill_speed_transforms(
     gated_by_frame: dict[int, ViewTransformer | None],
-    keypoints_by_frame: dict[int, sv.KeyPoints | None],
-    *,
-    confidence: float = 0.9,
-    config: SoccerPitchConfiguration = PITCH_CONFIG,
+    ungated_by_frame: dict[int, ViewTransformer | None],
 ) -> dict[int, ViewTransformer]:
-    """Speed H per frame: gated where available, else ungated keypoint fit."""
-    ungated = build_minimap_transform_map(
-        keypoints_by_frame, confidence=confidence, config=config
-    )
+    """Speed H per frame: gated where available, else ungated minimap fit."""
     filled: dict[int, ViewTransformer] = {}
     for fi in gated_by_frame:
         gated = gated_by_frame[fi]
-        t = gated if gated is not None else ungated.get(int(fi))
+        t = gated if gated is not None else ungated_by_frame.get(int(fi))
         if t is not None:
             filled[int(fi)] = t
     return filled

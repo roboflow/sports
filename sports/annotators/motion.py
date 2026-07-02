@@ -16,7 +16,6 @@ from sports.configs.soccer import (
 TEAM_COLORS = [sv.Color.from_hex("#FF1493"), sv.Color.from_hex("#00BFFF")]
 NEUTRAL_COLOR = sv.Color.from_hex("#CCCCCC")
 
-JOYSTICK_MIN_SPEED_PX = 0.5
 JOYSTICK_MAX_SPEED_PX = 4.0
 JOYSTICK_ELLIPSE_THICKNESS = 2.0
 
@@ -109,13 +108,13 @@ def draw_joystick_dots(
         vx, vy = float(kf_vx[i]), float(kf_vy[i])
         if np.isfinite(vx) and np.isfinite(vy):
             speed = float(np.hypot(vx, vy))
-            if speed >= JOYSTICK_MIN_SPEED_PX:
-                if JOYSTICK_MAX_SPEED_PX <= JOYSTICK_MIN_SPEED_PX:
+            if speed >= DEFAULT_MIN_SPEED_PX:
+                if JOYSTICK_MAX_SPEED_PX <= DEFAULT_MIN_SPEED_PX:
                     stick = 1.0
                 else:
                     linear = float(np.clip(
-                        (speed - JOYSTICK_MIN_SPEED_PX)
-                        / (JOYSTICK_MAX_SPEED_PX - JOYSTICK_MIN_SPEED_PX),
+                        (speed - DEFAULT_MIN_SPEED_PX)
+                        / (JOYSTICK_MAX_SPEED_PX - DEFAULT_MIN_SPEED_PX),
                         0.0,
                         1.0,
                     ))

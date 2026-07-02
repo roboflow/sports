@@ -12,6 +12,7 @@ from ultralytics import YOLO
 
 from sports.annotators.soccer import draw_pitch, draw_points_on_pitch, player_ellipse_annotator
 from sports.common.ball import BallTracker, BallAnnotator
+from sports.common.detection import PITCH_DETECTION_MODEL_PATH
 from sports.common.team import TeamClassifier
 from sports.common.tracking import get_crops, resolve_goalkeepers_team_id
 from sports.common.view import ViewTransformer
@@ -29,7 +30,6 @@ from speed import run_speed
 
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
-PITCH_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-pitch-detection.pt')
 BALL_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-ball-detection.pt')
 
 STRIDE = 60

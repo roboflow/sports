@@ -123,6 +123,18 @@ on the field.
 
   Optional: `--max-frames N` caps processing for analytics. Use **N ≥ 60** (team fitting samples every 60 frames); smaller values fail with an unfitted UMAP reducer.
 
+- `SPEED` — Same player overlays as DIRECTION, plus per-player ground-speed badges
+  (m/s) from gated pitch homography and a translucent radar minimap.
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/renders/2e57b9_0-speed.mp4 \
+  --device mps --mode SPEED --max-frames 90
+  ```
+
+  Pitch keypoints are cached on disk like player detections. Optional:
+  `--pitch-detector`, `--pitch-model-path`, `--pitch-model-id`.
+
 ## 🗺️ roadmap
 
 - [ ] Add smoothing to eliminate flickering in RADAR mode.

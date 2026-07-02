@@ -10,13 +10,55 @@ from sports.annotators.motion import (
 )
 from sports.common.kinematics import (
     JoystickDotSmoother,
-    KalmanSpeedDisplaySmoother,
     KalmanVelocitySmoother,
     feet_xy,
-    kalman_ground_speed_m_s,
 )
 from sports.common.tracking import open_video
 from sports.common.video_tracking import VideoTrackingSession, build_video_tracking_session
+from sports.common.view import ViewTransformer
+
+
+def kalman_ground_speed_m_s(
+    feet_px: np.ndarray,
+    vel_px: np.ndarray,
+    transformer: ViewTransformer | None,
+    *,
+    fps: float,
+    min_speed_px: float = 0.0,
+) -> float | None:
+    """Ground speed (m/s) from Kalman image velocity via pitch homography."""
+    if transformer is None or fps <= 0:
+        return None
+    vel = np.asarray(vel_px, dtype=np.float64).reshape(2)
+    vx, vy = float(vel[0]), float(vel[1])
+    if not np.isfinite(vx) or not np.isfinite(vy):
+        return 0.0
+    speed_px_val = float(np.hypot(vx, vy))
+    if speed_px_val < min_speed_px:
+        return 0.0
+    feet = np.asarray(feet_px, dtype=np.float64).reshape(2)
+    p0 = transformer.transform_points(feet.reshape(1, 2).astype(np.float32))
+    p1 = transformer.transform_points((feet + vel).reshape(1, 2).astype(np.float32))
+    delta_cm = p1[0] - p0[0]
+    delta_m = delta_cm / 100.0
+    return float(np.linalg.norm(delta_m)) * float(fps)
+
+
+class KalmanSpeedDisplaySmoother:
+    """EMA on displayed ground speed (m/s) per track."""
+
+    def __init__(self, *, alpha: float = 0.3) -> None:
+        self.alpha = float(np.clip(alpha, 0.05, 1.0))
+        self._speed: dict[int, float] = {}
+
+    def smooth(self, tracker_id: int, speed_m_s: float) -> float:
+        if tracker_id < 0:
+            return float(speed_m_s)
+        a = self.alpha
+        if tracker_id in self._speed:
+            speed_m_s = a * float(speed_m_s) + (1.0 - a) * self._speed[tracker_id]
+        self._speed[tracker_id] = float(speed_m_s)
+        return float(speed_m_s)
 
 
 def run_speed(args, session=None) -> None:
