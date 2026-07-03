@@ -1,10 +1,20 @@
+import colorsys
+
 import cv2
 import numpy as np
 import supervision as sv
 
 from sports.annotators.soccer import draw_pitch, draw_points_on_pitch, player_ellipse_annotator
 from sports.common.draw import draw_text_shadow
-from sports.common.kinematics import DEFAULT_MIN_SPEED_PX, feet_xy, player_mask
+from sports.common.homography import valid_pitch_cm
+from sports.common.kinematics import (
+    DEFAULT_MIN_SPEED_PX,
+    HOMOGRAPHY_PITCH_SMOOTH,
+    PlayerTrack,
+    _smooth_trajectory,
+    feet_xy,
+    player_mask,
+)
 from sports.common.view import ViewTransformer
 from sports.configs.soccer import (
     BALL_CLASS_ID,
@@ -304,3 +314,185 @@ def draw_radar_minimap(
                 )
     overlay_minimap(frame, radar, margin_x=margin_x, margin_y=margin_y, alpha=alpha)
     return frame
+
+
+def _format_distance_value(distance_m: float) -> str:
+    return f"{max(0, int(round(float(distance_m))))} m"
+
+
+def draw_distance_labels(
+    frame: np.ndarray,
+    detections: sv.Detections,
+    distance_by_tid: dict[int, float],
+) -> None:
+    """Draw cumulative distance above each tracked player as a styled chip."""
+    if len(detections) == 0 or detections.tracker_id is None:
+        return
+    teams = (
+        detections.data.get("team", np.full(len(detections), TEAM_NONE))
+        if detections.data else np.full(len(detections), TEAM_NONE)
+    )
+    for i, tid in enumerate(detections.tracker_id):
+        tid = int(tid)
+        if tid < 0:
+            continue
+        dist_m = distance_by_tid.get(tid)
+        if dist_m is None:
+            continue
+        xyxy = detections.xyxy[i]
+        x1, y1, x2 = xyxy[0], xyxy[1], xyxy[2]
+        cx = (float(x1) + float(x2)) / 2.0
+        label = _format_distance_value(dist_m)
+        _, box_h, _vh, _baseline = _chip_box_size(label)
+        cy = float(y1) - 8 - box_h * 0.5
+        team = int(teams[i])
+        team_bgr = _team_color(team).as_bgr()
+        _draw_chip(frame, label, (cx, cy), team_bgr=team_bgr)
+
+
+def track_id_color(tid: int) -> tuple[int, int, int]:
+    """Deterministic BGR color from tracker id."""
+    hue = (tid * 0.618033988749895) % 1.0
+    r, g, b = colorsys.hsv_to_rgb(hue, 0.85, 0.95)
+    return int(b * 255), int(g * 255), int(r * 255)
+
+
+def draw_trace_on_minimap(
+    radar: np.ndarray,
+    trace_cm: np.ndarray,
+    color_bgr: tuple[int, int, int],
+    *,
+    padding: int = RADAR_MINIMAP_PAD,
+    scale: float = RADAR_MINIMAP_SCALE,
+    thickness: int = 2,
+    smooth_window: int | None = None,
+    margin_cm: float = 80.0,
+) -> np.ndarray:
+    """Draw a pitch-cm polyline trace on a minimap image."""
+    window = HOMOGRAPHY_PITCH_SMOOTH if smooth_window is None else smooth_window
+    trace_cm = np.asarray(trace_cm, dtype=np.float64)
+    if trace_cm.ndim == 2 and len(trace_cm):
+        on_pitch = valid_pitch_cm(trace_cm, margin_cm=margin_cm)
+        trace_cm = trace_cm[on_pitch]
+        trace_cm = _smooth_trajectory(trace_cm, window)
+    pts: list[tuple[int, int]] = []
+    for pt in trace_cm:
+        if np.any(np.isnan(pt)):
+            continue
+        px = int(pt[0] * scale) + padding
+        py = int(pt[1] * scale) + padding
+        pts.append((px, py))
+    if len(pts) >= 2:
+        cv2.polylines(radar, [np.array(pts, dtype=np.int32)], False, color_bgr, thickness, cv2.LINE_AA)
+    if pts:
+        cv2.circle(radar, pts[-1], 7, color_bgr, -1, cv2.LINE_AA)
+        cv2.circle(radar, pts[-1], 7, (255, 255, 255), 1, cv2.LINE_AA)
+    return radar
+
+
+def build_trace_minimap(
+    detections: sv.Detections,
+    transformer: ViewTransformer | None,
+    trace_by_tid: dict[int, list[np.ndarray]],
+    focus_tid: int | None = None,
+    *,
+    config=None,
+    scale: float = RADAR_MINIMAP_SCALE,
+    padding: int = RADAR_MINIMAP_PAD,
+) -> np.ndarray:
+    """Build a radar minimap with per-track colored traces and current player dots."""
+    if focus_tid is not None:
+        focus_tid = int(focus_tid)
+
+    if config is None:
+        config = SoccerPitchConfiguration()
+    radar = draw_pitch(config=config, padding=padding, scale=scale)
+
+    if focus_tid is None:
+        trace_items = trace_by_tid.items()
+    else:
+        pts = trace_by_tid.get(focus_tid)
+        trace_items = ((focus_tid, pts),) if pts is not None else ()
+    for tid, pts in trace_items:
+        if len(pts) < 2:
+            continue
+        trace = np.stack(pts, axis=0)
+        color = track_id_color(int(tid))
+        radar = draw_trace_on_minimap(radar, trace, color, padding=padding, scale=scale)
+
+    if transformer is not None and len(detections):
+        pmask = player_mask(detections)
+        if pmask.any():
+            pdet = detections[pmask]
+            if focus_tid is not None and pdet.tracker_id is not None:
+                focus_mask = pdet.tracker_id == focus_tid
+                pdet = pdet[focus_mask] if focus_mask.any() else sv.Detections.empty()
+            if len(pdet) == 0:
+                return radar
+            xy = feet_xy(pdet).astype(np.float32)
+            xy_cm = transformer.transform_points(xy)
+            on_pitch = valid_pitch_cm(xy_cm, config, margin_cm=80.0)
+            tids_p = pdet.tracker_id if pdet.tracker_id is not None else np.full(len(pdet), -1)
+            teams = (
+                pdet.data.get("team", np.full(len(pdet), TEAM_NONE))
+                if pdet.data else np.full(len(pdet), TEAM_NONE)
+            )
+            for i in range(len(pdet)):
+                if not on_pitch[i]:
+                    continue
+                t_id = int(tids_p[i])
+                team = int(teams[i])
+                if team in (0, 1):
+                    color = TEAM_COLORS[team].as_bgr()
+                else:
+                    color = track_id_color(t_id) if t_id >= 0 else (150, 150, 150)
+                pt_cm = xy_cm[i]
+                px = int(pt_cm[0] * scale) + padding
+                py = int(pt_cm[1] * scale) + padding
+                cv2.circle(radar, (px, py), 8, color, -1, cv2.LINE_AA)
+                cv2.circle(radar, (px, py), 8, (255, 255, 255), 1, cv2.LINE_AA)
+    return radar
+
+
+def draw_distance_end_card(
+    width: int,
+    height: int,
+    tracks: dict[int, PlayerTrack],
+    *,
+    n_top: int = 10,
+) -> np.ndarray:
+    """Black end-card with distance leaderboard."""
+    card = np.zeros((height, width, 3), dtype=np.uint8)
+    title = "DISTANCE LEADERBOARD"
+    cv2.putText(
+        card, title, (40, 60), cv2.FONT_HERSHEY_DUPLEX, 1.2,
+        (255, 255, 255), 2, cv2.LINE_AA,
+    )
+    cv2.line(card, (40, 80), (width - 40, 80), (120, 120, 120), 1)
+
+    ranked = sorted(
+        ((tid, t.distance_m) for tid, t in tracks.items()),
+        key=lambda x: x[1],
+        reverse=True,
+    )[:n_top]
+
+    y = 130
+    for rank, (tid, dist_m) in enumerate(ranked, 1):
+        label = f"#{rank:2d}   Track {tid:4d}   {dist_m:7.1f} m"
+        color = (255, 215, 0) if rank == 1 else (200, 200, 200)
+        cv2.putText(
+            card, label, (60, y), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 1, cv2.LINE_AA,
+        )
+        y += 46
+
+    cv2.putText(
+        card,
+        "Distance measured via gated pitch homography",
+        (40, height - 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.42,
+        (90, 90, 90),
+        1,
+        cv2.LINE_AA,
+    )
+    return card

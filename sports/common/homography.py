@@ -342,3 +342,22 @@ def gap_fill_speed_transforms(
         if t is not None:
             filled[int(fi)] = t
     return filled
+
+
+def valid_pitch_cm(
+    xy: np.ndarray,
+    config: SoccerPitchConfiguration = PITCH_CONFIG,
+    *,
+    margin_cm: float = 200.0,
+) -> np.ndarray:
+    """Mask for warped points that fall inside the pitch rectangle (drops outliers)."""
+    if xy is None or len(xy) == 0:
+        return np.zeros(0, dtype=bool)
+    finite = np.isfinite(xy).all(axis=1)
+    return (
+        finite
+        & (xy[:, 0] >= margin_cm)
+        & (xy[:, 0] <= config.length - margin_cm)
+        & (xy[:, 1] >= margin_cm)
+        & (xy[:, 1] <= config.width - margin_cm)
+    )

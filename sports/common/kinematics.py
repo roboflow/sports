@@ -1,3 +1,6 @@
+from dataclasses import dataclass, field
+from typing import Any
+
 import numpy as np
 import supervision as sv
 from trackers.utils.state_representations import XCYCWHStateEstimator, XYXYStateEstimator
@@ -5,6 +8,9 @@ from trackers.utils.state_representations import XCYCWHStateEstimator, XYXYState
 from sports.configs.soccer import GOALKEEPER_CLASS_ID, PLAYER_CLASS_ID
 
 DEFAULT_MIN_SPEED_PX = 0.5
+MAX_PHYSICAL_STEP_MS = 12.5
+HOMOGRAPHY_PITCH_SMOOTH = 9
+HOMOGRAPHY_XY_SMOOTH = 5
 
 
 def feet_xy(detections: sv.Detections) -> np.ndarray:
@@ -159,3 +165,147 @@ class JoystickDotSmoother:
             oy = a * oy + (1.0 - a) * poy
         self._offset[tracker_id] = (ox, oy)
         return int(round(cx + ox)), int(round(cy + oy))
+
+
+@dataclass
+class PlayerTrack:
+    track_id: int
+    frames: list[int] = field(default_factory=list)
+    xy: list[tuple[float, float]] = field(default_factory=list)
+    box_h: list[float] = field(default_factory=list)
+    distance_m: float = 0.0
+    cumulative_m: np.ndarray | None = None
+
+
+def collect_tracks(detections_iter) -> dict[int, PlayerTrack]:
+    """Accumulate per-track feet positions from a (frame_idx, detections) iterator."""
+    tracks: dict[int, PlayerTrack] = {}
+    for frame_idx, dets in detections_iter:
+        if dets.tracker_id is None or len(dets) == 0:
+            continue
+        pmask = player_mask(dets)
+        if not pmask.any():
+            continue
+        fxy = feet_xy(dets)
+        heights = dets.xyxy[:, 3] - dets.xyxy[:, 1]
+        for i in np.flatnonzero(pmask):
+            tid = int(dets.tracker_id[i])
+            if tid < 0:
+                continue
+            track = tracks.setdefault(tid, PlayerTrack(tid))
+            track.frames.append(int(frame_idx))
+            track.xy.append((float(fxy[i, 0]), float(fxy[i, 1])))
+            track.box_h.append(float(heights[i]))
+    return tracks
+
+
+def _smooth_xy(xy: np.ndarray, window: int) -> np.ndarray:
+    """Moving-average smooth an (N, 2) trajectory."""
+    if len(xy) < 2 or window <= 1:
+        return xy
+    pad = window // 2
+    out = xy.copy()
+    for k in range(2):
+        col = xy[:, k]
+        padded = np.pad(col, pad, mode="edge")
+        out[:, k] = np.array([np.mean(padded[i:i + window]) for i in range(len(col))])
+    return out
+
+
+def _smooth_trajectory(pos: np.ndarray, window: int) -> np.ndarray:
+    """Median-smooth (N, 2) pitch positions; NaN-filled from track median first."""
+    if len(pos) < 2 or window <= 1:
+        return pos
+    out = pos.copy()
+    for k in range(2):
+        col = out[:, k].copy()
+        valid = np.isfinite(col)
+        if not valid.any():
+            continue
+        col[~valid] = float(np.median(col[valid]))
+        pad = window // 2
+        padded = np.pad(col, pad, mode="edge")
+        out[:, k] = np.array([np.median(padded[i:i + window]) for i in range(len(col))])
+    return out
+
+
+def _pitch_positions(
+    xy: np.ndarray,
+    frames: np.ndarray,
+    frame_transforms: dict,
+) -> np.ndarray:
+    """Per-sample pitch positions (m) warped with that frame's homography."""
+    n = len(frames)
+    pos = np.full((n, 2), np.nan, dtype=np.float64)
+    for i in range(n):
+        t = frame_transforms.get(int(frames[i]))
+        if t is None:
+            continue
+        pt = t.transform_points(xy[i].reshape(1, 2).astype(np.float32))[0]
+        pos[i] = pt / 100.0
+    return pos
+
+
+def _distance_from_smoothed(
+    pos: np.ndarray,
+    frames: np.ndarray,
+    fps: float,
+    *,
+    pitch_smooth: int = HOMOGRAPHY_PITCH_SMOOTH,
+    max_step_ms: float = MAX_PHYSICAL_STEP_MS,
+) -> tuple[float, np.ndarray]:
+    """Smooth pitch trajectory then integrate 1-frame hops."""
+    smooth_pos = _smooth_trajectory(pos, pitch_smooth)
+    n = len(frames)
+    step_m = np.zeros(max(n - 1, 0), dtype=np.float64)
+    for j in range(1, n):
+        if np.any(np.isnan(smooth_pos[j])) or np.any(np.isnan(smooth_pos[j - 1])):
+            continue
+        dt = (int(frames[j]) - int(frames[j - 1])) / fps
+        if dt <= 0:
+            continue
+        dist = float(np.linalg.norm(smooth_pos[j] - smooth_pos[j - 1]))
+        if dist / dt <= max_step_ms:
+            step_m[j - 1] = dist
+    return float(np.sum(step_m)), step_m
+
+
+def compute_kinematics(
+    tracks: dict[int, PlayerTrack],
+    fps: float,
+    *,
+    mode: str = "homography",
+    frame_transforms: dict[int, Any] | None = None,
+    min_frames: int = 2,
+) -> dict[int, PlayerTrack]:
+    """Compute cumulative distance for each track via gated homography."""
+    for track in tracks.values():
+        if len(track.frames) < min_frames:
+            track.distance_m = 0.0
+            track.cumulative_m = np.zeros(len(track.frames))
+            continue
+
+        xy = np.asarray(track.xy, dtype=np.float64)
+        frames = np.asarray(track.frames)
+        transforms = frame_transforms or {}
+
+        if mode == "homography" and transforms:
+            xy = _smooth_xy(xy, HOMOGRAPHY_XY_SMOOTH)
+            pos = _pitch_positions(xy, frames, transforms)
+            dist_m, step_m = _distance_from_smoothed(pos, frames, fps)
+            track.distance_m = dist_m
+            cum = np.zeros(len(frames), dtype=np.float64)
+            for j in range(len(step_m)):
+                cum[j + 1] = cum[j] + step_m[j]
+            track.cumulative_m = cum
+        else:
+            track.distance_m = 0.0
+            track.cumulative_m = np.zeros(len(track.frames))
+    return tracks
+
+
+def cumulative_distance_at_frame(track: PlayerTrack, frame_idx: int) -> float | None:
+    """Running distance (m) at frame_idx after compute_kinematics."""
+    if track.cumulative_m is None or frame_idx not in track.frames:
+        return None
+    return float(track.cumulative_m[track.frames.index(frame_idx)])

@@ -97,6 +97,24 @@ def _speed_by_tid(
     return speed_by_tid
 
 
+def _annotate_speed_overlay(
+    frame: np.ndarray,
+    dets: sv.Detections,
+    speed_by_tid: dict[int, float],
+    joy_smoother: JoystickDotSmoother,
+    *,
+    show_legend: bool = True,
+) -> None:
+    """Team ellipses + speed badges + optional legend (in-place)."""
+    annotate_team_ellipses(frame, dets)
+    draw_joystick_dots(
+        frame, dets, joy_smoother,
+        speed_by_tid=speed_by_tid, show_speed=True,
+    )
+    if show_legend:
+        draw_speed_legend(frame)
+
+
 def _render_speed(args, session: VideoTrackingSession) -> None:
     fps, width, height = session.fps, session.width, session.height
     gap_filled = session.gap_filled_transforms_by_frame
@@ -135,12 +153,9 @@ def _render_speed(args, session: VideoTrackingSession) -> None:
                 )
 
                 annotated = frame.copy()
-                annotated = annotate_team_ellipses(annotated, dets)
-                draw_joystick_dots(
-                    annotated, dets, joy_smoother,
-                    speed_by_tid=speed_by_tid, show_speed=True,
+                _annotate_speed_overlay(
+                    annotated, dets, speed_by_tid, joy_smoother,
                 )
-                draw_speed_legend(annotated)
                 draw_radar_minimap(
                     annotated, dets, minimap_transforms.get(frame_idx),
                 )
