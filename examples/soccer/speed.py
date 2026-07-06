@@ -73,6 +73,7 @@ def _speed_by_tid(
     transformer: ViewTransformer | None,
     fps: float,
     speed_smoother: KalmanSpeedDisplaySmoother,
+    only_tid: int | None = None,
 ) -> dict[int, float]:
     speed_by_tid: dict[int, float] = {}
     if dets.tracker_id is None or transformer is None or dets.data is None:
@@ -85,6 +86,8 @@ def _speed_by_tid(
     for i, tid in enumerate(dets.tracker_id):
         tid = int(tid)
         if tid < 0:
+            continue
+        if only_tid is not None and tid != only_tid:
             continue
         vx, vy = float(kf_vx[i]), float(kf_vy[i])
         if not (np.isfinite(vx) and np.isfinite(vy)):

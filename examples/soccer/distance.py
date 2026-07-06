@@ -4,10 +4,12 @@ import supervision as sv
 
 from sports.annotators.motion import (
     build_trace_minimap,
+    dim_frame,
     draw_distance_end_card,
     draw_distance_labels,
     draw_speed_legend,
     overlay_minimap,
+    spotlight,
 )
 from sports.common.kinematics import (
     JoystickDotSmoother,
@@ -28,10 +30,16 @@ def run_distance(args, session=None) -> None:
     """Render speed + distance chips, trace minimap, and distance leaderboard end-card."""
     if session is None:
         session = build_video_tracking_session(args, need_homography=True)
-    _render_distance(args, session)
+    _render_speed_distance_traces(args, session, append_end_card=True)
 
 
-def _render_distance(args, session: VideoTrackingSession) -> None:
+def _render_speed_distance_traces(
+    args,
+    session: VideoTrackingSession,
+    *,
+    focus_tid: int | None = None,
+    append_end_card: bool = False,
+) -> None:
     fps, width, height = session.fps, session.width, session.height
     gap_filled = session.gap_filled_transforms_by_frame
     minimap_transforms = session.minimap_transforms_by_frame
@@ -74,10 +82,13 @@ def _render_distance(args, session: VideoTrackingSession) -> None:
                         tid = int(tid)
                         if tid < 0:
                             continue
+                        if focus_tid is not None and tid != focus_tid:
+                            continue
                         trace_by_tid.setdefault(tid, []).append(xy_cm[i].copy())
 
                 speed_by_tid = _speed_by_tid(
                     dets, gap_filled.get(frame_idx), fps, speed_smoother,
+                    only_tid=focus_tid,
                 )
 
                 dist_by_tid: dict[int, float] = {}
@@ -91,22 +102,48 @@ def _render_distance(args, session: VideoTrackingSession) -> None:
                         if dist is not None:
                             dist_by_tid[tid] = dist
 
-                annotated = frame.copy()
-                _annotate_speed_overlay(
-                    annotated, dets, speed_by_tid, joy_smoother, show_legend=False,
-                )
-                draw_distance_labels(annotated, dets, dist_by_tid)
-                draw_speed_legend(annotated)
-                mini_radar = build_trace_minimap(
-                    dets, radar_h, trace_by_tid, None,
-                )
-                overlay_minimap(annotated, mini_radar)
+                radar_transformer = radar_h
+                if focus_tid is not None:
+                    spotlight_mask = (
+                        dets.tracker_id == focus_tid
+                        if dets.tracker_id is not None
+                        else np.zeros(len(dets), dtype=bool)
+                    )
+                    visible = bool(spotlight_mask.any())
+                    if visible:
+                        box = dets.xyxy[spotlight_mask][0]
+                        cx_f = int((box[0] + box[2]) / 2)
+                        cy_f = int(box[3])
+                        annotated = spotlight(frame, cx_f, cy_f)
+                    else:
+                        annotated = dim_frame(frame)
+                    marked = dets[spotlight_mask]
+                    _annotate_speed_overlay(
+                        annotated, marked, speed_by_tid, joy_smoother, show_legend=False,
+                    )
+                    draw_distance_labels(annotated, marked, dist_by_tid)
+                    mini_radar = build_trace_minimap(
+                        dets, radar_transformer, trace_by_tid, focus_tid,
+                    )
+                    overlay_minimap(annotated, mini_radar)
+                else:
+                    annotated = frame.copy()
+                    _annotate_speed_overlay(
+                        annotated, dets, speed_by_tid, joy_smoother, show_legend=False,
+                    )
+                    draw_distance_labels(annotated, dets, dist_by_tid)
+                    draw_speed_legend(annotated)
+                    mini_radar = build_trace_minimap(
+                        dets, radar_transformer, trace_by_tid, None,
+                    )
+                    overlay_minimap(annotated, mini_radar)
                 sink.write_frame(annotated)
 
-            end_card = draw_distance_end_card(width, height, raw_tracks)
-            n_end_frames = max(1, int(fps * 3))
-            for _ in range(n_end_frames):
-                sink.write_frame(end_card)
+            if append_end_card:
+                end_card = draw_distance_end_card(width, height, raw_tracks)
+                n_end_frames = max(1, int(fps * 3))
+                for _ in range(n_end_frames):
+                    sink.write_frame(end_card)
     finally:
         cap.release()
 

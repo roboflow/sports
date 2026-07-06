@@ -32,6 +32,8 @@ JOYSTICK_ELLIPSE_THICKNESS = 2.0
 RADAR_MINIMAP_SCALE = 0.065
 RADAR_MINIMAP_PAD = 30
 RADAR_MINIMAP_ALPHA = 0.6
+SPOTLIGHT_RADIUS = 210
+SPOTLIGHT_STRENGTH = 0.88
 # ~18 km/h: highlight sprint-speed badges with a stronger chip border.
 SPEED_SPRINT_MS = 5.0
 _SPEED_BADGE_BG_BGR = (16, 18, 24)
@@ -252,6 +254,27 @@ def draw_speed_legend(frame: np.ndarray) -> None:
         font_scale=scale, color_bgr=(220, 222, 230), thickness=thick,
         font=_CHIP_FONT,
     )
+
+
+def dim_frame(frame: np.ndarray, level: float = 0.22) -> np.ndarray:
+    return np.clip(frame.astype(np.float32) * level, 0, 255).astype(np.uint8)
+
+
+def spotlight(
+    frame: np.ndarray,
+    cx: int,
+    cy: int,
+    radius: int = SPOTLIGHT_RADIUS,
+    strength: float = SPOTLIGHT_STRENGTH,
+) -> np.ndarray:
+    """Dim the frame, then restore the spotlighted player within a soft circle."""
+    dimmed = dim_frame(frame)
+    mask = np.zeros(frame.shape[:2], dtype=np.float32)
+    cv2.circle(mask, (cx, cy), radius, 1.0, -1, cv2.LINE_AA)
+    mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=radius * 0.38)
+    mask = (mask[..., np.newaxis] * strength).astype(np.float32)
+    out = dimmed.astype(np.float32) * (1.0 - mask) + frame.astype(np.float32) * mask
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def overlay_minimap(
