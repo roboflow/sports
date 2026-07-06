@@ -3,10 +3,12 @@ import numpy as np
 import supervision as sv
 
 from sports.annotators.motion import (
+    annotate_team_ellipses,
     build_trace_minimap,
     dim_frame,
     draw_distance_end_card,
     draw_distance_labels,
+    draw_joystick_dots,
     draw_speed_legend,
     overlay_minimap,
     spotlight,
@@ -27,16 +29,35 @@ from speed import (
 
 
 def run_distance(args, session=None) -> None:
-    """Render speed + distance chips, trace minimap, and distance leaderboard end-card."""
+    """Render direction dots + distance chips, trace minimap, and distance leaderboard end-card."""
     if session is None:
         session = build_video_tracking_session(args, need_homography=True)
-    _render_speed_distance_traces(args, session, append_end_card=True)
+    _render_speed_distance_traces(args, session, show_speed=False, append_end_card=True)
+
+
+def _annotate_player_overlay(
+    frame: np.ndarray,
+    dets: sv.Detections,
+    joy_smoother: JoystickDotSmoother,
+    speed_by_tid: dict[int, float],
+    *,
+    show_speed: bool,
+) -> None:
+    """Team ellipses + direction dots; optional m/s badges when show_speed."""
+    if show_speed:
+        _annotate_speed_overlay(
+            frame, dets, speed_by_tid, joy_smoother, show_legend=False,
+        )
+    else:
+        annotate_team_ellipses(frame, dets)
+        draw_joystick_dots(frame, dets, joy_smoother)
 
 
 def _render_speed_distance_traces(
     args,
     session: VideoTrackingSession,
     *,
+    show_speed: bool = True,
     focus_tid: int | None = None,
     append_end_card: bool = False,
 ) -> None:
@@ -86,10 +107,12 @@ def _render_speed_distance_traces(
                             continue
                         trace_by_tid.setdefault(tid, []).append(xy_cm[i].copy())
 
-                speed_by_tid = _speed_by_tid(
-                    dets, gap_filled.get(frame_idx), fps, speed_smoother,
-                    only_tid=focus_tid,
-                )
+                speed_by_tid: dict[int, float] = {}
+                if show_speed:
+                    speed_by_tid = _speed_by_tid(
+                        dets, gap_filled.get(frame_idx), fps, speed_smoother,
+                        only_tid=focus_tid,
+                    )
 
                 dist_by_tid: dict[int, float] = {}
                 if dets.tracker_id is not None:
@@ -118,8 +141,8 @@ def _render_speed_distance_traces(
                     else:
                         annotated = dim_frame(frame)
                     marked = dets[spotlight_mask]
-                    _annotate_speed_overlay(
-                        annotated, marked, speed_by_tid, joy_smoother, show_legend=False,
+                    _annotate_player_overlay(
+                        annotated, marked, joy_smoother, speed_by_tid, show_speed=show_speed,
                     )
                     draw_distance_labels(annotated, marked, dist_by_tid)
                     mini_radar = build_trace_minimap(
@@ -128,11 +151,12 @@ def _render_speed_distance_traces(
                     overlay_minimap(annotated, mini_radar)
                 else:
                     annotated = frame.copy()
-                    _annotate_speed_overlay(
-                        annotated, dets, speed_by_tid, joy_smoother, show_legend=False,
+                    _annotate_player_overlay(
+                        annotated, dets, joy_smoother, speed_by_tid, show_speed=show_speed,
                     )
                     draw_distance_labels(annotated, dets, dist_by_tid)
-                    draw_speed_legend(annotated)
+                    if show_speed:
+                        draw_speed_legend(annotated)
                     mini_radar = build_trace_minimap(
                         dets, radar_transformer, trace_by_tid, None,
                     )

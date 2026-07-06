@@ -135,10 +135,9 @@ on the field.
   Pitch keypoints are cached on disk like player detections. Optional:
   `--pitch-detector`, `--pitch-model-path`, `--pitch-model-id`.
 
-- `DISTANCE` — Same overlays as SPEED, plus cumulative distance chips (m),
+- `DISTANCE` — Direction dots (same as DIRECTION) plus cumulative distance chips (m),
   per-player trace lines on the radar minimap, and a 3-second distance
-  leaderboard end-card. Distance integrates via gated pitch homography
-  (speed badges still use gap-filled homography).
+  leaderboard end-card. No m/s badges. Distance integrates via gated pitch homography.
 
   ```bash
   python main.py --source_video_path data/2e57b9_0.mp4 \
