@@ -8,6 +8,7 @@ def run_speed_and_distance(args, session=None):
     focus = getattr(args, "track_id", None)
     _render_speed_distance_traces(
         args, session,
+        show_speed=True,
         focus_tid=int(focus) if focus is not None else None,
         append_end_card=False,
     )
