@@ -26,7 +26,9 @@ from sports.configs.soccer import (
 
 from direction import run_direction
 from distance import run_distance
+from run_all import run_all
 from speed import run_speed
+from speed_and_distance import run_speed_and_distance
 
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
@@ -88,9 +90,14 @@ class Mode(Enum):
     DIRECTION = 'DIRECTION'
     SPEED = 'SPEED'
     DISTANCE = 'DISTANCE'
+    SPEED_AND_DISTANCE = 'SPEED_AND_DISTANCE'
+    ALL = 'ALL'
 
 
-ANALYTICS_MODES = (Mode.DIRECTION, Mode.SPEED, Mode.DISTANCE)
+ANALYTICS_MODES = (
+    Mode.DIRECTION, Mode.SPEED, Mode.DISTANCE,
+    Mode.SPEED_AND_DISTANCE, Mode.ALL,
+)
 
 
 def run_analytics_mode(mode: Mode, args: argparse.Namespace) -> None:
@@ -100,6 +107,10 @@ def run_analytics_mode(mode: Mode, args: argparse.Namespace) -> None:
         run_speed(args)
     elif mode == Mode.DISTANCE:
         run_distance(args)
+    elif mode == Mode.SPEED_AND_DISTANCE:
+        run_speed_and_distance(args)
+    elif mode == Mode.ALL:
+        run_all(args)
     else:
         raise NotImplementedError(f"Mode {mode} is not an analytics mode.")
 
@@ -429,6 +440,8 @@ if __name__ == '__main__':
                         help='(analytics) Cache per-frame detections on disk')
     parser.add_argument('--cache-dir', dest='cache_dir', default=None,
                         help='(analytics) Directory for the on-disk cache')
+    parser.add_argument('--track-id', dest='track_id', type=int, default=None,
+                        help='(analytics) Spotlight a specific tracker id (SPEED_AND_DISTANCE)')
 
     args = parser.parse_args()
 
