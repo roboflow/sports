@@ -9,6 +9,7 @@ from sports.common.kinematics import feet_xy, player_mask
 from sports.common.team import (
     TeamLocks,
     _fill_goalkeeper_teams_by_centroid,
+    clone_team_frames,
     lock_teams_by_tracklet_majority,
 )
 from sports.common.tracking import resolve_goalkeepers_team_id
@@ -337,27 +338,44 @@ def apply_goalkeeper_teams(
     return _apply_goalkeeper_centroid(dets)
 
 
+def derive_gk_locks(
+    frames: list[tuple[int, sv.Detections]],
+    *,
+    minimap_transforms: dict[int, object] | None = None,
+) -> tuple[dict[int, int], tuple[int, int] | None]:
+    """Derive goalkeeper and goal-defender locks without mutating outfield teams."""
+    if minimap_transforms:
+        gk_frames = clone_team_frames(frames)
+        locked_goal_defenders = warmup_goal_defenders_radar(
+            gk_frames, minimap_transforms,
+        )
+        gk_lock = stabilize_goalkeeper_teams(
+            gk_frames,
+            transforms=minimap_transforms,
+            locked_goal_defenders=locked_goal_defenders,
+            mutate=False,
+        )
+        return gk_lock, locked_goal_defenders
+    return {}, None
+
+
 def derive_clip_locks(
     frames: list[tuple[int, sv.Detections]],
     *,
     minimap_transforms: dict[int, object] | None = None,
 ) -> TeamLocks:
     """Derive team / goalkeeper / goal-defender locks from a tracking pass."""
+    outfield = clone_team_frames(frames)
+    team_lock = lock_teams_by_tracklet_majority(outfield)
+
     gk_lock: dict[int, int] = {}
     locked_goal_defenders: tuple[int, int] | None = None
-
     if minimap_transforms:
-        locked_goal_defenders = warmup_goal_defenders_radar(frames, minimap_transforms)
-        gk_lock = stabilize_goalkeeper_teams(
-            frames,
-            transforms=minimap_transforms,
-            locked_goal_defenders=locked_goal_defenders,
-            mutate=True,
+        gk_lock, locked_goal_defenders = derive_gk_locks(
+            frames, minimap_transforms=minimap_transforms,
         )
     else:
-        _fill_goalkeeper_teams_by_centroid(frames)
-
-    team_lock = lock_teams_by_tracklet_majority(frames)
+        _fill_goalkeeper_teams_by_centroid(outfield)
 
     return TeamLocks(
         team_lock=team_lock,

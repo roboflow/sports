@@ -23,11 +23,12 @@ from sports.common.kinematics import (
     collect_tracks,
     compute_kinematics,
 )
-from sports.common.goalkeeper import apply_goalkeeper_teams, derive_clip_locks
+from sports.common.goalkeeper import apply_goalkeeper_teams, derive_gk_locks
 from sports.common.team import (
     TeamLocks,
     apply_team_lock,
     clone_team_frames,
+    lock_teams_by_tracklet_majority,
     relock_detection_teams,
 )
 from sports.common.tracking import (
@@ -73,14 +74,19 @@ class VideoTrackingSession:
     def team_locks(self) -> TeamLocks:
         """Return clip-level team locks, cached."""
         if self._team_lock is None:
-            cloned = clone_team_frames(self.frames)
-            minimap = (
-                self.minimap_transforms_by_frame
-                if self.kp_by_frame is not None
-                else None
-            )
-            self._team_lock = derive_clip_locks(
-                cloned, minimap_transforms=minimap,
+            outfield = clone_team_frames(self.frames)
+            team_lock = lock_teams_by_tracklet_majority(outfield)
+            gk_lock: dict[int, int] = {}
+            locked_goal_defenders: tuple[int, int] | None = None
+            if self.kp_by_frame is not None:
+                gk_lock, locked_goal_defenders = derive_gk_locks(
+                    self.frames,
+                    minimap_transforms=self.minimap_transforms_by_frame,
+                )
+            self._team_lock = TeamLocks(
+                team_lock=team_lock,
+                gk_lock=gk_lock,
+                locked_goal_defenders=locked_goal_defenders,
             )
         return self._team_lock
 

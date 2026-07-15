@@ -72,8 +72,8 @@ class TeamClassifier:
         self.features_model = SiglipVisionModel.from_pretrained(
             SIGLIP_MODEL_PATH).to(device)
         self.processor = AutoProcessor.from_pretrained(SIGLIP_MODEL_PATH)
-        self.reducer = umap.UMAP(n_components=3, n_jobs=1, random_state=0)
-        self.cluster_model = KMeans(n_clusters=2, random_state=0)
+        self.reducer = umap.UMAP(n_components=3, n_jobs=1)
+        self.cluster_model = KMeans(n_clusters=2)
 
     def extract_features(self, crops: List[np.ndarray]) -> np.ndarray:
         """
@@ -287,8 +287,7 @@ def _fill_goalkeeper_teams_by_centroid(
 def derive_tracklet_team_lock(
     frames: list[tuple[int, sv.Detections]],
 ) -> dict[int, int]:
-    """Derive clip-level team lock (centroid GK when no homography)."""
-    from sports.common.goalkeeper import derive_clip_locks
-
-    return derive_clip_locks(frames, minimap_transforms=None).team_lock
+    """Derive clip-level team lock with centroid goalkeeper fill."""
+    _fill_goalkeeper_teams_by_centroid(frames)
+    return lock_teams_by_tracklet_majority(frames)
 
