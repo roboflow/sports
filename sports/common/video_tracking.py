@@ -18,11 +18,6 @@ from sports.common.homography import (
     gap_fill_speed_transforms,
     replay_gated_transforms,
 )
-from sports.common.kinematics import (
-    PlayerTrack,
-    collect_tracks,
-    compute_kinematics,
-)
 from sports.common.goalkeeper import apply_goalkeeper_teams, derive_gk_locks
 from sports.common.team import (
     TeamLocks,
@@ -69,7 +64,6 @@ class VideoTrackingSession:
     _speed_transforms: dict | None = field(default=None, repr=False)
     _gap_filled_transforms: dict | None = field(default=None, repr=False)
     _minimap_transforms: dict | None = field(default=None, repr=False)
-    _tracks: dict[int, PlayerTrack] | None = field(default=None, repr=False)
 
     def team_locks(self) -> TeamLocks:
         """Return clip-level team locks, cached."""
@@ -117,19 +111,6 @@ class VideoTrackingSession:
                 raise RuntimeError("pitch keypoints were not computed for this session")
             self._minimap_transforms = build_minimap_transform_map(self.kp_by_frame)
         return self._minimap_transforms
-
-    @property
-    def tracks(self) -> dict[int, PlayerTrack]:
-        """Per-track cumulative distance from gated homography (not gap-filled)."""
-        if self._tracks is None:
-            raw = collect_tracks(self.iter_tracked())
-            self._tracks = compute_kinematics(
-                raw,
-                self.fps,
-                mode="homography",
-                frame_transforms=self._gated_speed_transforms(),
-            )
-        return self._tracks
 
     def iter_tracked(self):
         """Yield frame_idx and tracked detections with blocked ids removed."""
