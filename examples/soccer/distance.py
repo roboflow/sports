@@ -93,6 +93,7 @@ def _render_speed_distance_traces(
                     tracked,
                     locks=locks,
                     vel_smoother=vel_smoother,
+                    frame_idx=frame_idx,
                 )
 
                 radar_h = minimap_transforms.get(frame_idx)
