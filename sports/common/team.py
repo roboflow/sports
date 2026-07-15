@@ -1,5 +1,5 @@
 from typing import Generator, Iterable, List, TypeVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import supervision as sv
@@ -22,9 +22,11 @@ SIGLIP_MODEL_PATH = 'google/siglip-base-patch16-224'
 
 @dataclass
 class TeamLocks:
-    """Clip-level team lock for direction mode."""
+    """Clip-level team and goalkeeper locks."""
 
     team_lock: dict
+    gk_lock: dict = field(default_factory=dict)
+    locked_goal_defenders: tuple[int, int] | None = None
 
 
 def create_batches(
@@ -267,7 +269,8 @@ def _fill_goalkeeper_teams_by_centroid(
 def derive_tracklet_team_lock(
     frames: list[tuple[int, sv.Detections]],
 ) -> dict[int, int]:
-    """Derive clip-level team lock with centroid goalkeeper fill."""
-    _fill_goalkeeper_teams_by_centroid(frames)
-    return lock_teams_by_tracklet_majority(frames)
+    """Derive clip-level team lock (centroid GK when no homography)."""
+    from sports.common.goalkeeper import derive_clip_locks
+
+    return derive_clip_locks(frames, minimap_transforms=None).team_lock
 

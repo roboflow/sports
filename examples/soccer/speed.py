@@ -128,6 +128,7 @@ def _render_speed(args, session: VideoTrackingSession) -> None:
                     tracked,
                     locks=locks,
                     vel_smoother=vel_smoother,
+                    frame_idx=frame_idx,
                 )
                 speed_by_tid = _speed_by_tid(
                     dets, gap_filled.get(frame_idx), fps, speed_smoother,

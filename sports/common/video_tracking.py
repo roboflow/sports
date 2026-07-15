@@ -18,11 +18,16 @@ from sports.common.homography import (
     gap_fill_speed_transforms,
     replay_gated_transforms,
 )
+from sports.common.kinematics import (
+    PlayerTrack,
+    collect_tracks,
+    compute_kinematics,
+)
+from sports.common.goalkeeper import apply_goalkeeper_teams, derive_clip_locks
 from sports.common.team import (
     TeamLocks,
     apply_team_lock,
     clone_team_frames,
-    derive_tracklet_team_lock,
     relock_detection_teams,
 )
 from sports.common.tracking import (
@@ -34,9 +39,8 @@ from sports.common.tracking import (
     drop_blocked_tracker_ids,
     fit_team_classifier,
     open_video,
-    resolve_goalkeepers_team_id,
 )
-from sports.configs.soccer import GOALKEEPER_CLASS_ID, PLAYER_CLASS_ID, TEAM_NONE
+from sports.configs.soccer import TEAM_NONE
 
 
 @dataclass
@@ -64,13 +68,19 @@ class VideoTrackingSession:
     _speed_transforms: dict | None = field(default=None, repr=False)
     _gap_filled_transforms: dict | None = field(default=None, repr=False)
     _minimap_transforms: dict | None = field(default=None, repr=False)
+    _tracks: dict[int, PlayerTrack] | None = field(default=None, repr=False)
 
     def team_locks(self) -> TeamLocks:
         """Return clip-level team locks, cached."""
         if self._team_lock is None:
             cloned = clone_team_frames(self.frames)
-            self._team_lock = TeamLocks(
-                team_lock=derive_tracklet_team_lock(cloned),
+            minimap = (
+                self.minimap_transforms_by_frame
+                if self.kp_by_frame is not None
+                else None
+            )
+            self._team_lock = derive_clip_locks(
+                cloned, minimap_transforms=minimap,
             )
         return self._team_lock
 
@@ -102,6 +112,19 @@ class VideoTrackingSession:
             self._minimap_transforms = build_minimap_transform_map(self.kp_by_frame)
         return self._minimap_transforms
 
+    @property
+    def tracks(self) -> dict[int, PlayerTrack]:
+        """Per-track cumulative distance from gated homography (not gap-filled)."""
+        if self._tracks is None:
+            raw = collect_tracks(self.iter_tracked())
+            self._tracks = compute_kinematics(
+                raw,
+                self.fps,
+                mode="homography",
+                frame_transforms=self._gated_speed_transforms(),
+            )
+        return self._tracks
+
     def iter_tracked(self):
         """Yield frame_idx and tracked detections with blocked ids removed."""
         for frame_idx, dets in self.frames:
@@ -117,22 +140,15 @@ class VideoTrackingSession:
         *,
         locks: TeamLocks,
         vel_smoother,
+        frame_idx: int,
     ) -> sv.Detections:
-        """Apply team lock and centroid goalkeeper assignment to a replay frame."""
+        """Apply team lock and goalkeeper assignment to a replay frame."""
         team_arr = (
             np.array(tracked.data.get("team"), dtype=int)
             if tracked.data and tracked.data.get("team") is not None
             else np.full(len(tracked), TEAM_NONE, dtype=int)
         )
         team_arr = apply_team_lock(team_arr, tracked.tracker_id, locks.team_lock)
-        if len(tracked):
-            gk_mask = tracked.class_id == GOALKEEPER_CLASS_ID
-            pl_mask = tracked.class_id == PLAYER_CLASS_ID
-            if gk_mask.any() and (team_arr == 0).any() and (team_arr == 1).any():
-                gk_teams = resolve_goalkeepers_team_id(
-                    tracked[pl_mask], team_arr[pl_mask], tracked[gk_mask]
-                )
-                team_arr[gk_mask] = gk_teams
         data = dict(tracked.data) if tracked.data else {}
         data["team"] = team_arr
         decorated = sv.Detections(
@@ -141,6 +157,14 @@ class VideoTrackingSession:
             tracker_id=tracked.tracker_id,
             confidence=tracked.confidence,
             data=data,
+        )
+        radar_h = (
+            self.minimap_transforms_by_frame.get(frame_idx)
+            if self.kp_by_frame is not None
+            else None
+        )
+        decorated = apply_goalkeeper_teams(
+            decorated, transformer=radar_h, locks=locks,
         )
         decorated = vel_smoother.smooth_detections(decorated)
         decorated = relock_detection_teams(decorated, locks.team_lock)

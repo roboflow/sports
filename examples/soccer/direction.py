@@ -45,6 +45,7 @@ def _render_direction(args, session: VideoTrackingSession) -> None:
                     tracked,
                     locks=locks,
                     vel_smoother=vel_smoother,
+                    frame_idx=frame_idx,
                 )
 
                 annotated = frame.copy()
