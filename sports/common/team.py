@@ -72,8 +72,8 @@ class TeamClassifier:
         self.features_model = SiglipVisionModel.from_pretrained(
             SIGLIP_MODEL_PATH).to(device)
         self.processor = AutoProcessor.from_pretrained(SIGLIP_MODEL_PATH)
-        self.reducer = umap.UMAP(n_components=3, n_jobs=1)
-        self.cluster_model = KMeans(n_clusters=2)
+        self.reducer = umap.UMAP(n_components=3, n_jobs=1, random_state=0)
+        self.cluster_model = KMeans(n_clusters=2, random_state=0, n_init=10)
 
     def extract_features(self, crops: List[np.ndarray]) -> np.ndarray:
         """
