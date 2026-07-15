@@ -75,39 +75,6 @@ def get_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
     return [sv.crop_image(frame, xyxy) for xyxy in detections.xyxy]
 
 
-def get_jersey_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
-    """Crop the upper torso of each detection for shirt-colour classification.
-
-    Full-body boxes include a lot of green pitch, which collapses SigLIP/UMAP
-    clusters. Upper torso + slight horizontal inset focuses on the jersey.
-    """
-    crops: List[np.ndarray] = []
-    for xyxy in detections.xyxy:
-        x1, y1, x2, y2 = map(float, xyxy)
-        w, h = x2 - x1, y2 - y1
-        if w <= 1 or h <= 1:
-            crops.append(sv.crop_image(frame, xyxy))
-            continue
-        inset_x = 0.15 * w
-        jersey = np.array(
-            [x1 + inset_x, y1, x2 - inset_x, y1 + 0.55 * h], dtype=np.float32
-        )
-        crops.append(sv.crop_image(frame, jersey))
-    return crops
-
-
-def _team_fit_stride(max_frames, stride: int = STRIDE, *, min_frames: int = 8) -> int:
-    """Tighten sampling stride when max_frames would leave too few fit crops."""
-    if max_frames is None:
-        return stride
-    max_frames = int(max_frames)
-    if max_frames <= 0:
-        return stride
-    if max_frames // stride >= min_frames:
-        return stride
-    return max(1, max_frames // min_frames)
-
-
 def resolve_goalkeepers_team_id(
     players: sv.Detections,
     players_team_id: np.ndarray,
@@ -361,9 +328,8 @@ def fit_team_classifier(
     max_frames=None,
     det_by_frame=None,
 ) -> TeamClassifier:
-    """Sample frames at stride and fit TeamClassifier on jersey crops."""
+    """Sample frames at stride and fit TeamClassifier on player crops."""
     team_classifier = TeamClassifier(device=device)
-    stride = _team_fit_stride(max_frames, stride)
     crops = []
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     frame_idx = 0
@@ -383,7 +349,7 @@ def fit_team_classifier(
         else:
             dets = player_detector_fn(frame)
         players = dets[dets.class_id == PLAYER_CLASS_ID]
-        crops.extend(get_jersey_crops(frame, players))
+        crops.extend(get_crops(frame, players))
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     if crops:
         team_classifier.fit(crops)
@@ -445,7 +411,7 @@ def collect_team_frames(
                 t_players = tracked[tracked.class_id == PLAYER_CLASS_ID]
                 if len(t_players):
                     team_arr[tracked.class_id == PLAYER_CLASS_ID] = team_classifier.predict(
-                        get_jersey_crops(frame, t_players)
+                        get_crops(frame, t_players)
                     )
             data = {"team": team_arr}
             if capture_velocity:
