@@ -359,10 +359,6 @@ def derive_clip_locks(
 
     team_lock = lock_teams_by_tracklet_majority(frames)
 
-    for tid in list(gk_lock):
-        if tid in team_lock:
-            gk_lock[tid] = team_lock[tid]
-
     return TeamLocks(
         team_lock=team_lock,
         gk_lock=gk_lock,

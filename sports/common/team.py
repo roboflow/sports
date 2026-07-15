@@ -72,7 +72,7 @@ class TeamClassifier:
         self.features_model = SiglipVisionModel.from_pretrained(
             SIGLIP_MODEL_PATH).to(device)
         self.processor = AutoProcessor.from_pretrained(SIGLIP_MODEL_PATH)
-        self.reducer = umap.UMAP(n_components=3)
+        self.reducer = umap.UMAP(n_components=3, n_jobs=1)
         self.cluster_model = KMeans(n_clusters=2)
 
     def extract_features(self, crops: List[np.ndarray]) -> np.ndarray:
@@ -133,6 +133,9 @@ def lock_teams_by_tracklet_majority(
 ) -> dict[int, int]:
     """Lock one team per tracker id using a majority shirt-colour vote.
 
+    Only outfield (player-class) rows contribute votes so goalkeeper rows and
+    position-based GK fills cannot flip outfield tracklet colours.
+
     Args:
         frames: Sequence of ``(frame_idx, detections)`` pairs from a clip.
 
@@ -148,7 +151,7 @@ def lock_teams_by_tracklet_majority(
         )
         for i, tid in enumerate(dets.tracker_id):
             tid = int(tid)
-            if tid < 0:
+            if tid < 0 or int(dets.class_id[i]) != PLAYER_CLASS_ID:
                 continue
             raw = int(team[i])
             if raw in (0, 1):
@@ -186,18 +189,27 @@ def apply_team_lock(
 
 
 def relock_detection_teams(
-    dets: sv.Detections, team_lock: dict[int, int]
+    dets: sv.Detections,
+    team_lock: dict[int, int],
+    *,
+    gk_lock: dict[int, int] | None = None,
 ) -> sv.Detections:
     """Return detections with ``data['team']`` re-locked to the clip-level mapping.
+
+    Outfield rows use ``team_lock``; goalkeeper rows prefer ``gk_lock`` when set
+    so per-frame goal-distance assignment is not overwritten by shirt-colour votes.
 
     Args:
         dets: Input detections.
         team_lock: Clip-level ``{tracker_id: team}`` mapping.
+        gk_lock: Optional clip-level goalkeeper ``{tracker_id: team}`` mapping.
 
     Returns:
         New detections with updated team data, or ``dets`` unchanged when empty.
     """
-    if not team_lock or dets.tracker_id is None or len(dets) == 0:
+    if dets.tracker_id is None or len(dets) == 0:
+        return dets
+    if not team_lock and not gk_lock:
         return dets
     team = np.asarray(
         dets.data.get("team", np.full(len(dets), TEAM_NONE))
@@ -205,7 +217,13 @@ def relock_detection_teams(
         else np.full(len(dets), TEAM_NONE),
         dtype=int,
     )
-    team = apply_team_lock(team, dets.tracker_id, team_lock)
+    if team_lock:
+        team = apply_team_lock(team, dets.tracker_id, team_lock)
+    if gk_lock and dets.tracker_id is not None:
+        for i, tid in enumerate(dets.tracker_id):
+            tid = int(tid)
+            if int(dets.class_id[i]) == GOALKEEPER_CLASS_ID and tid in gk_lock:
+                team[i] = gk_lock[tid]
     data = dict(dets.data) if dets.data else {}
     data["team"] = team
     return sv.Detections(

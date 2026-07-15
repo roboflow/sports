@@ -167,7 +167,9 @@ class VideoTrackingSession:
             decorated, transformer=radar_h, locks=locks,
         )
         decorated = vel_smoother.smooth_detections(decorated)
-        decorated = relock_detection_teams(decorated, locks.team_lock)
+        decorated = relock_detection_teams(
+            decorated, locks.team_lock, gk_lock=locks.gk_lock or None,
+        )
         return decorated
 
 
