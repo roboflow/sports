@@ -145,7 +145,8 @@ on the field.
   --device mps --mode DISTANCE --max-frames 90
   ```
 
-  Requires pitch keypoints (same flags as SPEED).
+  Requires pitch keypoints (same flags as SPEED). Minimap shows defending-team
+  goal shading when homography locks are available.
 
 - `SPEED_AND_DISTANCE` — Speed + distance chips and per-player trace lines on the
   radar minimap (no end-card). Default shows all players; pass `--track-id N` to

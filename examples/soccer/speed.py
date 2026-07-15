@@ -161,6 +161,7 @@ def _render_speed(args, session: VideoTrackingSession) -> None:
                 )
                 draw_radar_minimap(
                     annotated, dets, minimap_transforms.get(frame_idx),
+                    locked_goal_defenders=locks.locked_goal_defenders,
                 )
                 sink.write_frame(annotated)
     finally:

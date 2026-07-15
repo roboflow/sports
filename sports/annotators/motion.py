@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from sports.annotators.soccer import draw_pitch, draw_points_on_pitch, player_ellipse_annotator
+from sports.annotators.soccer import draw_pitch, draw_points_on_pitch, draw_goals_on_pitch, player_ellipse_annotator
 from sports.common.draw import draw_text_shadow
 from sports.common.homography import valid_pitch_cm
 from sports.common.kinematics import (
@@ -305,12 +305,24 @@ def draw_radar_minimap(
     margin_x: int = 12,
     margin_y: int = 12,
     alpha: float = RADAR_MINIMAP_ALPHA,
+    locked_goal_defenders: tuple[int, int] | None = None,
 ) -> np.ndarray:
     """Overlay a plain translucent radar minimap in the bottom-right corner."""
     if transformer is None:
         return frame
     config = SoccerPitchConfiguration()
     radar = draw_pitch(config=config, padding=padding, scale=minimap_scale)
+    if locked_goal_defenders is not None:
+        left_def, right_def = locked_goal_defenders
+        if left_def in (0, 1) and right_def in (0, 1):
+            radar = draw_goals_on_pitch(
+                config,
+                left_defender_team=left_def,
+                right_defender_team=right_def,
+                padding=padding,
+                scale=minimap_scale,
+                pitch=radar,
+            )
     pmask = player_mask(detections)
     if pmask.any():
         pdet = detections[pmask]
@@ -422,6 +434,7 @@ def build_trace_minimap(
     config=None,
     scale: float = RADAR_MINIMAP_SCALE,
     padding: int = RADAR_MINIMAP_PAD,
+    locked_goal_defenders: tuple[int, int] | None = None,
 ) -> np.ndarray:
     """Build a radar minimap with per-track colored traces and current player dots."""
     if focus_tid is not None:
@@ -430,6 +443,17 @@ def build_trace_minimap(
     if config is None:
         config = SoccerPitchConfiguration()
     radar = draw_pitch(config=config, padding=padding, scale=scale)
+    if locked_goal_defenders is not None:
+        left_def, right_def = locked_goal_defenders
+        if left_def in (0, 1) and right_def in (0, 1):
+            radar = draw_goals_on_pitch(
+                config,
+                left_defender_team=left_def,
+                right_defender_team=right_def,
+                padding=padding,
+                scale=scale,
+                pitch=radar,
+            )
 
     if focus_tid is None:
         trace_items = trace_by_tid.items()
