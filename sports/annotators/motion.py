@@ -312,8 +312,13 @@ def draw_radar_minimap(
     margin_y: int = 12,
     alpha: float = RADAR_MINIMAP_ALPHA,
     locked_goal_defenders: tuple[int, int] | None = None,
+    decorate_radar=None,
 ) -> np.ndarray:
-    """Overlay a plain translucent radar minimap in the bottom-right corner."""
+    """Overlay a plain translucent radar minimap in the bottom-right corner.
+
+    ``decorate_radar`` is an optional ``Callable[[np.ndarray], np.ndarray]``
+    applied after players are drawn (e.g. pass corridors).
+    """
     if transformer is None:
         return frame
     config = SoccerPitchConfiguration()
@@ -353,6 +358,8 @@ def draw_radar_minimap(
                     scale=minimap_scale,
                     pitch=radar,
                 )
+    if decorate_radar is not None:
+        radar = decorate_radar(radar)
     overlay_minimap(frame, radar, margin_x=margin_x, margin_y=margin_y, alpha=alpha)
     return frame
 

@@ -19,7 +19,7 @@ input coordinates: pixels for v1, meters for v2), then combined with weights.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import supervision as sv
@@ -27,8 +27,10 @@ import supervision as sv
 from sports.common.geometry import (
     count_lane_blockers,
     count_lane_blockers_body,
+    lane_blocking_mask_body,
     lane_segment_clearance,
     lane_segment_clearance_body,
+    pass_corridor_polygon,
     point_to_segment_distance,
     unit,
 )
@@ -144,6 +146,15 @@ class PassWeights:
 
 
 @dataclass(frozen=True)
+class PassLaneDebug:
+    """Pitch-radar debug: corridor quad (cm) and detection indices of blockers."""
+
+    corridor_polygon_cm: np.ndarray
+    blocking_rival_indices: tuple[int, ...]
+    blocking_teammate_indices: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class PassOption:
     receiver_index: int
     receiver_xy: np.ndarray
@@ -159,6 +170,7 @@ class PassOption:
     motion_alignment: float  # cos(pass, run); 0 if run unknown
     receiver_space: float  # raw distance, receiver to nearest opponent
     length: float
+    lane_debug: PassLaneDebug | None = None
 
 
 def _rival_lane_width_steps(
@@ -209,6 +221,140 @@ def _open_ref_for_lane(weights: PassWeights, lane_width: float | None) -> float:
     if weights.lane_in_image_space and lane_width is not None and lane_width > 0:
         return lane_width
     return weights.open_ref
+
+
+def _half_width_cm(
+    weights: PassWeights,
+    lane_width: float | None,
+    *,
+    pass_length_m: float,
+    pass_length_px: float,
+    use_image_lane: bool,
+) -> float:
+    """Corridor half-width in pitch cm for radar / video overlays."""
+    if lane_width is None or lane_width <= 0:
+        return 50.0
+    if use_image_lane and pass_length_px > 1e-3 and pass_length_m > 1e-3:
+        cm_per_px = pass_length_m * 100.0 / pass_length_px
+        return (lane_width / 2.0) * cm_per_px
+    return (lane_width / 2.0) * 100.0
+
+
+def _build_lane_debug(
+    *,
+    pitch_cm: np.ndarray,
+    carrier_index: int,
+    receiver_index: int,
+    opponents: np.ndarray,
+    teammates_block: np.ndarray,
+    lane_opp_feet: np.ndarray,
+    lane_opp_body: np.ndarray,
+    lane_team_feet: np.ndarray,
+    lane_carrier: np.ndarray,
+    lane_receiver: np.ndarray,
+    lane_kw: dict,
+    team_lane_kw: dict,
+    use_body: bool,
+    opp_radius: np.ndarray | None,
+    half_width_cm: float,
+) -> PassLaneDebug:
+    opp_global = np.flatnonzero(opponents)
+    team_global = np.flatnonzero(teammates_block)
+    if use_body and len(lane_opp_feet):
+        rival_mask = lane_blocking_mask_body(
+            lane_opp_feet,
+            lane_opp_body,
+            lane_carrier,
+            lane_receiver,
+            player_radius=opp_radius,
+            **lane_kw,
+        )
+        team_mask = lane_blocking_mask_body(
+            lane_team_feet,
+            lane_team_feet,
+            lane_carrier,
+            lane_receiver,
+            player_radius=None,
+            **team_lane_kw,
+        )
+    else:
+        rival_mask = lane_blocking_mask_body(
+            lane_opp_feet,
+            lane_opp_feet,
+            lane_carrier,
+            lane_receiver,
+            **lane_kw,
+        )
+        team_mask = lane_blocking_mask_body(
+            lane_team_feet,
+            lane_team_feet,
+            lane_carrier,
+            lane_receiver,
+            **team_lane_kw,
+        )
+    poly = pass_corridor_polygon(
+        pitch_cm[carrier_index],
+        pitch_cm[receiver_index],
+        half_width_cm,
+        t_min=lane_kw["t_min"],
+        t_max=lane_kw["t_max"],
+    )
+    return PassLaneDebug(
+        corridor_polygon_cm=poly,
+        blocking_rival_indices=tuple(
+            int(opp_global[i]) for i in np.flatnonzero(rival_mask)
+        ),
+        blocking_teammate_indices=tuple(
+            int(team_global[i]) for i in np.flatnonzero(team_mask)
+        ),
+    )
+
+
+def remap_lane_debug_to_pitch_cm(
+    options: list[PassOption],
+    carrier: Carrier,
+    pitch_cm: np.ndarray,
+    feet_img: np.ndarray,
+    *,
+    weights: PassWeights | None = None,
+) -> list[PassOption]:
+    """Rebuild corridor quads in another pitch-cm frame (e.g. sports radar H)."""
+    weights = weights or PassWeights.metric()
+    ci = carrier.index
+    remapped: list[PassOption] = []
+    for opt in options:
+        ri = opt.receiver_index
+        if ci >= len(pitch_cm) or ri >= len(pitch_cm):
+            remapped.append(opt)
+            continue
+        delta_cm = pitch_cm[ri] - pitch_cm[ci]
+        length_m = float(np.linalg.norm(delta_cm)) / 100.0
+        pass_len_px = float(np.linalg.norm(feet_img[ri] - feet_img[ci]))
+        lane_w = _lane_width_for_pass(
+            weights, pass_length=length_m, pass_length_px=pass_len_px
+        )
+        half_cm = _half_width_cm(
+            weights,
+            lane_w,
+            pass_length_m=length_m,
+            pass_length_px=pass_len_px,
+            use_image_lane=weights.lane_in_image_space,
+        )
+        poly = pass_corridor_polygon(
+            pitch_cm[ci],
+            pitch_cm[ri],
+            half_cm,
+            t_min=weights.lane_t_min,
+            t_max=weights.lane_t_max,
+        )
+        prev = opt.lane_debug
+        debug = PassLaneDebug(
+            corridor_polygon_cm=poly,
+            blocking_rival_indices=prev.blocking_rival_indices if prev else (),
+            blocking_teammate_indices=prev.blocking_teammate_indices if prev else (),
+        )
+        remapped.append(replace(opt, lane_debug=debug))
+    return remapped
 
 
 def _backward_motion_penalty_from_align(
@@ -282,6 +428,7 @@ def score_pass_options(
     attack_dir: np.ndarray | None = None,
     positions: np.ndarray | None = None,
     carrier_motion_dir: np.ndarray | None = None,
+    pitch_cm: np.ndarray | None = None,
     body_pitch_m: np.ndarray | None = None,
 ) -> list[PassOption]:
     """Rank every teammate as a passing option (best first).
@@ -289,6 +436,7 @@ def score_pass_options(
     Pass *positions* (e.g. pitch coordinates in meters) to score in metric space
     instead of image pixels. *carrier_motion_dir* is the unit run vector from recent
     Kalman filter velocity (same coordinate system as *positions*).
+    When *pitch_cm* is set, each option also carries corridor geometry for overlays.
     """
     pmask = player_mask(detections)
     feet_img = feet_xy(detections)
@@ -447,6 +595,33 @@ def score_pass_options(
         if length < weights.min_length or length > weights.max_length:
             continue
 
+        lane_debug = None
+        if pitch_cm is not None and weights.use_lane_openness:
+            half_cm = _half_width_cm(
+                weights,
+                lane_w,
+                pass_length_m=length,
+                pass_length_px=pass_len_px,
+                use_image_lane=use_image_lane,
+            )
+            lane_debug = _build_lane_debug(
+                pitch_cm=pitch_cm,
+                carrier_index=carrier.index,
+                receiver_index=int(idx),
+                opponents=opponents,
+                teammates_block=blockers,
+                lane_opp_feet=lane_opp_feet,
+                lane_opp_body=lane_opp_body,
+                lane_team_feet=team_xy if len(team_xy) else np.zeros((0, 2)),
+                lane_carrier=lane_carrier,
+                lane_receiver=lane_receiver,
+                lane_kw=lane_kw,
+                team_lane_kw=team_lane_kw,
+                use_body=weights.lane_use_body_center,
+                opp_radius=opp_radius,
+                half_width_cm=half_cm,
+            )
+
         options.append(
             PassOption(
                 receiver_index=int(idx),
@@ -463,6 +638,7 @@ def score_pass_options(
                 motion_alignment=motion_align,
                 receiver_space=receiver_space,
                 length=length,
+                lane_debug=lane_debug,
             )
         )
 

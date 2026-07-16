@@ -41,11 +41,7 @@ from dataclasses import dataclass
 import numpy as np
 import supervision as sv
 
-from sports.common.pass_pitch import (
-    attack_direction,
-    image_to_pitch_m,
-    lane_scoring_transformer_for_frame,
-)
+from sports.common.pass_pitch import image_to_pitch_m
 from sports.common.possession import (
     AERIAL_DY_THRESHOLD_PX,
     CONTROL_MAX_DISTANCE_M,

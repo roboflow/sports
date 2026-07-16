@@ -175,6 +175,59 @@ def count_lane_blockers_body(
     return int((on_seg & (per_player <= lane_width / 2.0)).sum())
 
 
+def pass_corridor_polygon(
+    a: np.ndarray,
+    b: np.ndarray,
+    half_width: float,
+    *,
+    t_min: float = 0.0,
+    t_max: float = 1.0,
+) -> np.ndarray:
+    """Four corners of the pass corridor quad (same units as ``a`` / ``b``)."""
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    ab = b - a
+    length = float(np.linalg.norm(ab))
+    if length < 1e-9:
+        return np.repeat(a.reshape(1, 2), 4, axis=0)
+    u = ab / length
+    perp = np.array([-u[1], u[0]], dtype=np.float64)
+    start = a + u * (t_min * length)
+    end = a + u * (t_max * length)
+    hw = float(half_width)
+    return np.array(
+        [start + perp * hw, end + perp * hw, end - perp * hw, start - perp * hw],
+        dtype=np.float64,
+    )
+
+
+def lane_blocking_mask_body(
+    feet: np.ndarray,
+    body: np.ndarray,
+    a: np.ndarray,
+    b: np.ndarray,
+    *,
+    t_min: float = 0.0,
+    t_max: float = 1.0,
+    lane_width: float | None = None,
+    player_radius: np.ndarray | None = None,
+) -> np.ndarray:
+    """Boolean mask (len ``feet``) of players blocking the corridor."""
+    if len(feet) == 0:
+        return np.zeros(0, dtype=bool)
+    feet = np.asarray(feet, dtype=np.float64).reshape(-1, 2)
+    body = np.asarray(body, dtype=np.float64).reshape(-1, 2)
+    d_f, t_f = point_to_segment_distance_and_t(feet, a, b)
+    d_b, t_b = point_to_segment_distance_and_t(body, a, b)
+    on_seg = ((t_f >= t_min) & (t_f <= t_max)) | ((t_b >= t_min) & (t_b <= t_max))
+    per_player = np.where(on_seg, np.minimum(d_f, d_b), np.inf)
+    if player_radius is not None:
+        per_player = np.maximum(0.0, per_player - np.asarray(player_radius, dtype=np.float64))
+    if lane_width is None or lane_width <= 0:
+        return on_seg
+    return on_seg & (per_player <= lane_width / 2.0)
+
+
 def unit(vector: np.ndarray) -> np.ndarray:
     """Return the unit vector; zero vector maps to zero."""
     vector = np.asarray(vector, dtype=np.float64)
