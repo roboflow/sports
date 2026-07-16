@@ -36,11 +36,11 @@ def kalman_ground_speed_m_s(
     speed_px_val = float(np.hypot(vx, vy))
     if speed_px_val < min_speed_px:
         return 0.0
-    feet = np.asarray(feet_px, dtype=np.float64).reshape(2)
-    p0 = transformer.transform_points(feet.reshape(1, 2).astype(np.float32))
-    p1 = transformer.transform_points((feet + vel).reshape(1, 2).astype(np.float32))
-    delta_cm = p1[0] - p0[0]
-    delta_m = delta_cm / 100.0
+    from sports.common.pass_pitch import image_displacement_to_pitch_m
+
+    delta_m = image_displacement_to_pitch_m(feet_px, vel, transformer)
+    if delta_m is None:
+        return None
     return float(np.linalg.norm(delta_m)) * float(fps)
 
 

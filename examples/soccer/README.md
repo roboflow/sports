@@ -163,11 +163,25 @@ on the field.
   --device mps --mode SPEED_AND_DISTANCE --track-id 42 --max-frames 90
   ```
 
+- `PASS_NETWORK` — Ball attach + possession scan: completed passes / turnovers,
+  collaboration web, carrier highlight, radar minimap (with goal shading), and a
+  short top-collaborators end-card. Opt-in only (not part of `ALL`).
+
+  Requires the ball weights from `./setup.sh` (`data/football-ball-detection.pt`),
+  or pass `--ball-model-path`. Prefer a full clip (or `--max-frames` large enough
+  for several team-classifier fits) so pass recall is meaningful.
+
+  ```bash
+  python main.py --source_video_path data/08fd33_0.mp4 \
+  --target_video_path data/renders/08fd33_0-pass-network.mp4 \
+  --device mps --mode PASS_NETWORK --tracker bytetrack
+  ```
+
 - `ALL` — Runs DIRECTION, SPEED, DISTANCE, SPEED_AND_DISTANCE (all players), and
   SPEED_AND_DISTANCE (spotlight) in one pass. Builds a shared
   `VideoTrackingSession` once; each mode writes a separate `-{suffix}.mp4` next to
   the base `--target_video_path`. Spotlight track is the player with max cumulative
-  distance unless `--track-id` is set.
+  distance unless `--track-id` is set. Does **not** include `PASS_NETWORK`.
 
   ```bash
   python main.py --source_video_path data/2e57b9_0.mp4 \
@@ -176,7 +190,7 @@ on the field.
   ```
 
   Analytics flags: `--max-frames`, `--tracker`, `--track-id`, `--cache`, detector/model
-  paths (same as SPEED/DISTANCE).
+  paths (same as SPEED/DISTANCE). Optional for pass mode: `--ball-model-path`.
 
 ## 🗺️ roadmap
 

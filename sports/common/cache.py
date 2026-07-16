@@ -38,6 +38,7 @@ class FrameCache:
         player_model_id=None,
         pitch_backend=None,
         pitch_model_id=None,
+        ball_model_path=None,
     ):
         self.video_path = video_path
         self.enabled = enabled
@@ -45,11 +46,15 @@ class FrameCache:
         self._identity = _video_identity(video_path) if enabled else ""
         self._player_meta = {"backend": player_backend, "model_id": player_model_id}
         self._pitch_meta = {"backend": pitch_backend, "model_id": pitch_model_id}
+        self._ball_meta = {"model_path": ball_model_path}
         self._det_key = _key_hash(
             CACHE_VERSION, self._identity, "det", player_backend, player_model_id
         )
         self._kp_key = _key_hash(
             CACHE_VERSION, self._identity, "kp", pitch_backend, pitch_model_id
+        )
+        self._ball_key = _key_hash(
+            CACHE_VERSION, self._identity, "ball", ball_model_path
         )
 
     def _det_stem(self) -> Path:
@@ -57,6 +62,9 @@ class FrameCache:
 
     def _kp_stem(self) -> Path:
         return self.cache_dir / f"keypoints-{self._kp_key}"
+
+    def _ball_stem(self) -> Path:
+        return self.cache_dir / f"ball-{self._ball_key}"
 
     def _read(self, stem: Path):
         path = stem.with_suffix(".pkl")
@@ -133,6 +141,56 @@ class FrameCache:
             "frame_count": len(frames),
         }
         self._write(self._det_stem(), payload, manifest)
+
+    def load_ball_detections(self, max_frames):
+        """Return cached ball detections or None when missing or incomplete."""
+        if not self.enabled:
+            return None
+        data = self._read(self._ball_stem())
+        if not self._usable(data, max_frames):
+            return None
+        out = {}
+        for fi, rec in data["frames"].items():
+            fi = int(fi)
+            if max_frames is not None and fi > max_frames:
+                continue
+            out[fi] = sv.Detections(
+                xyxy=rec["xyxy"].astype(np.float32),
+                confidence=rec["confidence"].astype(np.float32),
+                class_id=rec["class_id"].astype(int),
+            )
+        return out
+
+    def save_ball_detections(self, ball_by_frame, complete: bool) -> None:
+        """Write ball detections to disk."""
+        if not self.enabled:
+            return
+        frames = {}
+        for fi, dets in ball_by_frame.items():
+            n = len(dets)
+            frames[int(fi)] = {
+                "xyxy": np.asarray(dets.xyxy, dtype=np.float32).reshape(n, 4),
+                "confidence": (
+                    np.asarray(dets.confidence, dtype=np.float32)
+                    if dets.confidence is not None
+                    else np.ones(n, dtype=np.float32)
+                ),
+                "class_id": (
+                    np.asarray(dets.class_id, dtype=int)
+                    if dets.class_id is not None
+                    else np.zeros(n, dtype=int)
+                ),
+            }
+        payload = {"complete": complete, "frame_count": len(frames), "frames": frames}
+        manifest = {
+            "kind": "ball",
+            "version": CACHE_VERSION,
+            "video_identity": self._identity,
+            "detector": self._ball_meta,
+            "complete": complete,
+            "frame_count": len(frames),
+        }
+        self._write(self._ball_stem(), payload, manifest)
 
     def load_keypoints(self, max_frames):
         """Return cached keypoints or None when missing or incomplete."""
@@ -220,6 +278,40 @@ def build_or_load_detections(
         cap.release()
     cache.save_detections(det_by_frame, complete=max_frames is None)
     return det_by_frame
+
+
+def build_or_load_ball_detections(
+    source_video_path: str,
+    detector_factory,
+    cache: FrameCache,
+    max_frames=None,
+):
+    """Return frame-indexed ball detections, using the cache when possible."""
+    cached = cache.load_ball_detections(max_frames)
+    if cached is not None:
+        print(f"Loaded ball detections from cache ({len(cached)} frames).")
+        return cached
+
+    print("Computing ball detections (cache miss)...")
+    ball_detector_fn = detector_factory()
+    ball_by_frame = {}
+    cap = cv2.VideoCapture(source_video_path)
+    if not cap.isOpened():
+        raise FileNotFoundError(f"Cannot open video: {source_video_path}")
+    frame_idx = 0
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_idx += 1
+            if max_frames is not None and frame_idx > max_frames:
+                break
+            ball_by_frame[frame_idx] = ball_detector_fn(frame)
+    finally:
+        cap.release()
+    cache.save_ball_detections(ball_by_frame, complete=max_frames is None)
+    return ball_by_frame
 
 
 def build_or_load_keypoints(
