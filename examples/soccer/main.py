@@ -13,17 +13,18 @@ from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
 from sports.common.ball import BallTracker, BallAnnotator
 from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
-from sports.configs.soccer import SoccerPitchConfiguration
+from sports.configs.soccer import (
+    BALL_CLASS_ID,
+    GOALKEEPER_CLASS_ID,
+    PLAYER_CLASS_ID,
+    REFEREE_CLASS_ID,
+    SoccerPitchConfiguration,
+)
 
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
 PITCH_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-pitch-detection.pt')
 BALL_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-ball-detection.pt')
-
-BALL_CLASS_ID = 0
-GOALKEEPER_CLASS_ID = 1
-PLAYER_CLASS_ID = 2
-REFEREE_CLASS_ID = 3
 
 STRIDE = 60
 CONFIG = SoccerPitchConfiguration()
