@@ -5,7 +5,6 @@ import numpy as np
 import supervision as sv
 from trackers.utils.state_representations import XCYCWHStateEstimator, XYXYStateEstimator
 
-from sports.common.geometry import unit
 from sports.configs.soccer import GOALKEEPER_CLASS_ID, PLAYER_CLASS_ID
 
 DEFAULT_MIN_SPEED_PX = 0.5
@@ -77,38 +76,6 @@ def kalman_velocity_arrays(
         kf_vx[i] = float(vel[0])
         kf_vy[i] = float(vel[1])
     return kf_vx, kf_vy
-
-
-def carrier_kalman_direction(
-    detections: sv.Detections,
-    carrier_index: int,
-    *,
-    transformer=None,
-    min_speed: float = DEFAULT_MIN_SPEED_PX,
-) -> np.ndarray | None:
-    """Unit movement direction for the ball carrier from Kalman velocity."""
-    if detections.data is None:
-        return None
-    kf_vx = detections.data.get("kf_vx")
-    kf_vy = detections.data.get("kf_vy")
-    if kf_vx is None or kf_vy is None:
-        return None
-    vx, vy = float(kf_vx[carrier_index]), float(kf_vy[carrier_index])
-    if not np.isfinite(vx) or not np.isfinite(vy):
-        return None
-    speed = float(np.hypot(vx, vy))
-    if speed < min_speed:
-        return None
-    vel_img = np.array([vx, vy], dtype=np.float64)
-    if transformer is None:
-        return unit(vel_img)
-    from sports.common.pass_pitch import image_displacement_to_pitch_m
-
-    feet = feet_xy(detections)[carrier_index]
-    delta = image_displacement_to_pitch_m(feet, vel_img, transformer)
-    if delta is None or float(np.linalg.norm(delta)) < 1e-6:
-        return unit(vel_img)
-    return unit(delta)
 
 
 def merge_kalman_velocity(

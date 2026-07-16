@@ -41,11 +41,7 @@ from dataclasses import dataclass
 import numpy as np
 import supervision as sv
 
-from sports.common.pass_pitch import (
-    attack_direction,
-    image_to_pitch_m,
-    lane_scoring_transformer_for_frame,
-)
+from sports.common.pass_pitch import image_to_pitch_m
 from sports.common.possession import (
     AERIAL_DY_THRESHOLD_PX,
     CONTROL_MAX_DISTANCE_M,
@@ -57,7 +53,6 @@ from sports.common.possession import (
     ball_departed_for_one_touch,
     ball_redirected_at_touch,
     ball_xy,
-    bbox_center_xy,
     find_active_carrier,
     find_control_carrier,
     find_reception_carrier,
@@ -70,12 +65,7 @@ from sports.common.possession import (
     redirect_overrides_transit_flyby,
 )
 from sports.configs.soccer import GOALKEEPER_CLASS_ID as ROLE_GOALKEEPER
-from sports.common.kinematics import carrier_kalman_direction, feet_xy, player_mask
-from sports.common.pass_options import (
-    PassOption,
-    PassWeights,
-    score_pass_options,
-)
+from sports.common.kinematics import feet_xy, player_mask
 DetectionIterator = Iterator[tuple[int, sv.Detections]]
 
 
@@ -248,33 +238,25 @@ class PossessionScanResult:
 
 
 class PassQualityScorer:
-    """Score an actual passer-to-receiver lane on a single frame."""
+    """Optional lane-quality decoration for inferred passes.
+
+    PR7 keeps this as a no-op so pass *detection* does not depend on
+    ``pass_options`` / alternatives scoring. PR8 restores real scoring via
+    ``score_pass_options``. Detection never gates on these fields.
+    """
 
     def __init__(
         self,
         *,
-        weights: PassWeights = PassWeights.metric(),
         metric: bool = True,
         transformers: dict[int, object] | None = None,
         keypoints_by_frame: dict[int, sv.KeyPoints | None] | None = None,
         pitch_confidence: float = 0.9,
     ) -> None:
-        self._weights = weights
         self._metric = metric
         self._transformers = transformers or {}
         self._keypoints_by_frame = keypoints_by_frame or {}
         self._pitch_confidence = pitch_confidence
-
-    def _lane_transformer(self, frame_idx: int):
-        """Gated speed H when available; else per-frame radar fit (lane scoring only)."""
-        if not self._metric:
-            return None
-        return lane_scoring_transformer_for_frame(
-            self._transformers,
-            frame_idx,
-            self._keypoints_by_frame.get(int(frame_idx)),
-            pitch_confidence=self._pitch_confidence,
-        )
 
     def option_for_receiver(
         self,
@@ -282,59 +264,8 @@ class PassQualityScorer:
         dets: sv.Detections,
         carrier: Carrier,
         receiver_tid: int,
-    ) -> PassOption | None:
-        """Return the scored lane to ``receiver_tid``, or None if not a teammate option."""
-        if receiver_tid < 0:
-            return None
-        pmask = player_mask(dets)
-        receiver_rows = np.flatnonzero(
-            pmask & (dets.tracker_id == receiver_tid)
-        )
-        if len(receiver_rows) == 0:
-            return None
-
-        motion_dir = None
-        if self._weights.use_carrier_motion:
-            transformer = self._lane_transformer(frame_idx)
-            motion_dir = carrier_kalman_direction(
-                dets,
-                carrier.index,
-                transformer=transformer if self._metric else None,
-            )
-
-        transformer = self._lane_transformer(frame_idx)
-        if self._metric and transformer is not None:
-            feet_img = feet_xy(dets)
-            pitch_feet = image_to_pitch_m(feet_img, transformer)
-            body_pitch_m = image_to_pitch_m(bbox_center_xy(dets), transformer)
-            if pitch_feet is None:
-                return None
-            attack_dir = attack_direction(
-                dets,
-                carrier.team,
-                transformer=transformer,
-            )
-            options = score_pass_options(
-                dets,
-                carrier,
-                weights=self._weights,
-                attack_dir=attack_dir,
-                positions=pitch_feet,
-                carrier_motion_dir=motion_dir,
-                body_pitch_m=body_pitch_m,
-            )
-        else:
-            options = score_pass_options(
-                dets,
-                carrier,
-                weights=self._weights,
-                carrier_motion_dir=motion_dir,
-            )
-
-        receiver_index = int(receiver_rows[0])
-        for option in options:
-            if option.receiver_index == receiver_index:
-                return option
+    ) -> None:
+        """Return lane quality for ``receiver_tid``, or ``None`` when unavailable."""
         return None
 
 
@@ -957,24 +888,25 @@ def _try_emit_pass(
             team=int(release_carrier.team),
             gap_frames=gap,
             pass_length_m=_pass_length_m(option, metric),
-            quality_score=float(option.score) if option else None,
-            openness=float(option.openness) if option else None,
-            forward_gain=float(option.forward_gain) if option else None,
-            rivals_in_lane=int(option.rivals_in_lane) if option else None,
-            motion_alignment=float(option.motion_alignment) if option else None,
-            receiver_space=float(option.receiver_space) if option else None,
+            quality_score=float(option.score) if option is not None else None,
+            openness=float(option.openness) if option is not None else None,
+            forward_gain=float(option.forward_gain) if option is not None else None,
+            rivals_in_lane=int(option.rivals_in_lane) if option is not None else None,
+            motion_alignment=(
+                float(option.motion_alignment) if option is not None else None
+            ),
+            receiver_space=float(option.receiver_space) if option is not None else None,
             touch_kind=touch_kind,
         )
     )
     return True
 
 
-def _pass_length_m(option: PassOption | None, metric: bool) -> float | None:
-    if option is None:
+def _pass_length_m(option: object | None, metric: bool) -> float | None:
+    if option is None or not metric:
         return None
-    if metric:
-        return float(option.length)
-    return None
+    length = getattr(option, "length", None)
+    return float(length) if length is not None else None
 
 
 def _active_carrier(
