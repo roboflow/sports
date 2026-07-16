@@ -555,13 +555,88 @@ def draw_pass_network_end_card(
     return card
 
 
+RANK_COLORS_BGR = (
+    (80, 180, 255),   # gold-ish BGR
+    (200, 200, 200),  # silver
+    (180, 130, 70),   # bronze
+)
+RANK_LABELS = ("1st", "2nd", "3rd")
+
+
+def draw_pass_alternatives_overlay(
+    frame: np.ndarray,
+    dets: sv.Detections,
+    event,
+    *,
+    revealed_options: int | None = None,
+    reveal_progress: float = 1.0,
+    transformer=None,
+    locked_goal_defenders: tuple[int, int] | None = None,
+    metric: bool = True,
+) -> np.ndarray:
+    """Dimmed freeze frame with ranked pass-lane arrows (reuses shared draw helpers)."""
+    dim = (frame.astype(np.float32) * 0.32).astype(np.uint8)
+    options = list(event.options)
+    visible = options
+    if revealed_options is not None:
+        visible = options[: max(0, revealed_options)]
+
+    dim = annotate_pass_players(dim, dets, show_tracker_ids=True)
+    dim = annotate_ball(dim, dets)
+
+    feet = feet_xy(dets)
+    carrier_xy = feet[event.carrier.index]
+    cx, cy = int(carrier_xy[0]), int(carrier_xy[1])
+    draw_carrier_ground_ellipse(
+        dim,
+        carrier_xy,
+        transformer=transformer,
+        color_bgr=CARRIER_SHADOW_BGR,
+        radius_m=0.55,
+        alpha=0.55,
+        filled=True,
+        thickness=2,
+    )
+
+    if revealed_options == 0:
+        draw_score_chip(dim, "ON BALL", (cx, cy - 42), bg_bgr=ROBOFLOW_PURPLE_BGR)
+        return draw_hud_bar(dim, "PASS ALTERNATIVES")
+
+    progress = float(np.clip(reveal_progress, 0.0, 1.0))
+    for rank, option in enumerate(visible):
+        color = RANK_COLORS_BGR[min(rank, len(RANK_COLORS_BGR) - 1)]
+        recv_xy = feet[option.receiver_index]
+        rx, ry = int(recv_xy[0]), int(recv_xy[1])
+        is_new = rank == len(visible) - 1
+        alpha = ease_out_cubic(progress) if is_new else 1.0
+        draw_glow_arrow(dim, (cx, cy), (rx, ry), color, thickness=5, alpha=alpha)
+        if alpha < 0.85:
+            continue
+        midx, midy = (cx + rx) // 2, (cy + ry) // 2
+        label = RANK_LABELS[min(rank, len(RANK_LABELS) - 1)]
+        chip = f"{label}  {option.score:.2f}"
+        if metric:
+            chip += f"  {option.length:.1f} m"
+        draw_score_chip(dim, chip, (midx, midy), bg_bgr=color)
+
+    dim = draw_radar_minimap(
+        dim,
+        dets,
+        transformer,
+        locked_goal_defenders=locked_goal_defenders,
+    )
+    return draw_hud_bar(dim, "PASS ALTERNATIVES  -  top open lanes")
+
+
 # Re-export for runners that already use motion.draw_radar_minimap
 __all__ = [
     "annotate_ball",
     "annotate_pass_players",
     "draw_carrier_ground_ellipse",
     "draw_collaboration_web",
+    "draw_glow_arrow",
     "draw_hud_bar",
+    "draw_pass_alternatives_overlay",
     "draw_pass_network_end_card",
     "draw_pass_network_frame_overlays",
     "draw_radar_minimap",

@@ -31,6 +31,8 @@ from sports.common.passes import (
     PossessionScanResult,
     scan_possession_events,
 )
+from sports.common.pass_alternatives import PassEvent, plan_pass_events
+from sports.common.pass_options import PassQualityScorer, PassWeights
 from sports.common.goalkeeper import apply_goalkeeper_teams, derive_gk_locks
 from sports.common.team import (
     TeamLocks,
@@ -79,6 +81,8 @@ class VideoTrackingSession:
     _ball_by_frame: dict | None = field(default=None, repr=False)
     _pass_frames: list | None = field(default=None, repr=False)
     _pass_scan: PossessionScanResult | None = field(default=None, repr=False)
+    _pass_scorer: PassQualityScorer | None = field(default=None, repr=False)
+    _pass_alternative_events: list[PassEvent] | None = field(default=None, repr=False)
     _team_lock: TeamLocks | None = field(default=None, repr=False)
     _speed_transforms: dict | None = field(default=None, repr=False)
     _gap_filled_transforms: dict | None = field(default=None, repr=False)
@@ -253,6 +257,19 @@ class VideoTrackingSession:
     def pass_by_frame(self) -> dict[int, sv.Detections]:
         return dict(self.pass_frames())
 
+    @property
+    def pass_scorer(self) -> PassQualityScorer:
+        if self._pass_scorer is None:
+            transformers = (
+                self.gap_filled_transforms_by_frame if self.kp_by_frame else None
+            )
+            self._pass_scorer = PassQualityScorer(
+                transformers=transformers,
+                keypoints_by_frame=self.kp_by_frame,
+                pitch_confidence=0.9,
+            )
+        return self._pass_scorer
+
     def pass_scan(self) -> PossessionScanResult:
         if self._pass_scan is None:
             config = PassDetectionConfig().for_frame_rate(self.fps)
@@ -267,6 +284,30 @@ class VideoTrackingSession:
                 fps=float(self.fps),
             )
         return self._pass_scan
+
+    def pass_alternative_events(
+        self,
+        *,
+        max_events: int | None = None,
+        min_gap_frames: int = 90,
+        weights: PassWeights | None = None,
+    ) -> list[PassEvent]:
+        """Cinematic freeze moments with top teammate pass lanes."""
+        if self._pass_alternative_events is None:
+            transformers = (
+                self.gap_filled_transforms_by_frame if self.kp_by_frame else {}
+            )
+            self._pass_alternative_events = plan_pass_events(
+                self.pass_frames(),
+                fps=float(self.fps),
+                frame_transforms=transformers,
+                keypoints_by_frame=self.kp_by_frame or {},
+                scorer=self.pass_scorer,
+                weights=weights,
+                max_events=max_events,
+                min_gap_frames=min_gap_frames,
+            )
+        return self._pass_alternative_events
 
 
 def _create_player_detector_factory(args) -> Callable:

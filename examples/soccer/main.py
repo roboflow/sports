@@ -26,6 +26,7 @@ from sports.configs.soccer import (
 
 from direction import run_direction
 from distance import run_distance
+from pass_alternatives import run_pass_alternatives
 from pass_network import run_pass_network
 from run_all import run_all
 from speed import run_speed
@@ -93,12 +94,13 @@ class Mode(Enum):
     DISTANCE = 'DISTANCE'
     SPEED_AND_DISTANCE = 'SPEED_AND_DISTANCE'
     PASS_NETWORK = 'PASS_NETWORK'
+    PASS_ALTERNATIVES = 'PASS_ALTERNATIVES'
     ALL = 'ALL'
 
 
 ANALYTICS_MODES = (
     Mode.DIRECTION, Mode.SPEED, Mode.DISTANCE,
-    Mode.SPEED_AND_DISTANCE, Mode.PASS_NETWORK, Mode.ALL,
+    Mode.SPEED_AND_DISTANCE, Mode.PASS_NETWORK, Mode.PASS_ALTERNATIVES, Mode.ALL,
 )
 
 
@@ -113,6 +115,8 @@ def run_analytics_mode(mode: Mode, args: argparse.Namespace) -> None:
         run_speed_and_distance(args)
     elif mode == Mode.PASS_NETWORK:
         run_pass_network(args)
+    elif mode == Mode.PASS_ALTERNATIVES:
+        run_pass_alternatives(args)
     elif mode == Mode.ALL:
         run_all(args)
     else:
