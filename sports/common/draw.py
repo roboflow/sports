@@ -88,6 +88,25 @@ def draw_score_chip(
     )
 
 
+def draw_branding_tag(
+    frame: np.ndarray, text: str = "powered by trackers"
+) -> np.ndarray:
+    """Small bottom-left brand tag."""
+    h, w = frame.shape[:2]
+    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+    x0, y0 = 12, h - 18
+    overlay = frame.copy()
+    cv2.rectangle(
+        overlay, (x0 - 6, y0 - th - 6), (x0 + tw + 8, y0 + 6), (18, 18, 22), -1
+    )
+    frame[:] = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+    draw_text_shadow(
+        frame, text, (x0, y0),
+        font_scale=0.45, color_bgr=ROBOFLOW_PURPLE_BGR, thickness=1,
+    )
+    return frame
+
+
 def make_end_card(
     width: int,
     height: int,

@@ -187,12 +187,21 @@ on the field.
   --device mps --mode PASS_ALTERNATIVES --tracker bytetrack
   ```
 
+- `PASS_COMPLETE` — Detected passes / turnovers / collaboration **plus** freeze
+  reveals of open lanes at each completed-pass release (`--show-predictions`).
+  Same as `PASS_NETWORK --show-predictions`.
+
+  ```bash
+  python main.py --source_video_path data/08fd33_0.mp4 \
+  --target_video_path data/renders/08fd33_0-pass-complete.mp4 \
+  --device mps --mode PASS_COMPLETE --tracker bytetrack
+  ```
+
 - `ALL` — Runs DIRECTION, SPEED, DISTANCE, SPEED_AND_DISTANCE (all players), and
   SPEED_AND_DISTANCE (spotlight) in one pass. Builds a shared
   `VideoTrackingSession` once; each mode writes a separate `-{suffix}.mp4` next to
   the base `--target_video_path`. Spotlight track is the player with max cumulative
-  distance unless `--track-id` is set. Does **not** include `PASS_NETWORK` or
-  `PASS_ALTERNATIVES`.
+  distance unless `--track-id` is set. Does **not** include pass modes.
 
   ```bash
   python main.py --source_video_path data/2e57b9_0.mp4 \

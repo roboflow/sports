@@ -14,6 +14,7 @@ from sports.annotators.motion import (
 )
 from sports.common.draw import (
     ROBOFLOW_PURPLE_BGR,
+    draw_branding_tag,
     draw_hud_bar,
     draw_score_chip,
     draw_text_shadow,
@@ -555,12 +556,150 @@ def draw_pass_network_end_card(
     return card
 
 
+RANK_LABELS = ("BEST", "2ND", "3RD")
+# Green / gold / orange (BGR) — matches Football AI / fork freeze demos.
 RANK_COLORS_BGR = (
-    (80, 180, 255),   # gold-ish BGR
-    (200, 200, 200),  # silver
-    (180, 130, 70),   # bronze
+    (60, 220, 60),
+    (0, 215, 255),
+    (40, 140, 255),
 )
-RANK_LABELS = ("1st", "2nd", "3rd")
+
+
+def draw_carrier_spotlight(
+    dimmed: np.ndarray,
+    original: np.ndarray,
+    center: tuple[int, int],
+    *,
+    radius: int = 150,
+    strength: float = 0.62,
+) -> np.ndarray:
+    """Keep the ball carrier readable while the rest of the frame is dimmed."""
+    h, w = dimmed.shape[:2]
+    cx, cy = center
+    mask = np.zeros((h, w), dtype=np.float32)
+    cv2.circle(mask, (cx, cy), radius, 1.0, -1, cv2.LINE_AA)
+    mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=radius * 0.38)
+    mask = (mask[..., None] * strength).astype(np.float32)
+    out = dimmed.astype(np.float32) * (1.0 - mask) + original.astype(np.float32) * mask
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def draw_carrier_pulse(
+    frame: np.ndarray,
+    center: tuple[int, int],
+    t: float,
+    *,
+    color_bgr: tuple[int, int, int] = ROBOFLOW_PURPLE_BGR,
+) -> None:
+    """Animated focus rings on the ball carrier."""
+    cx, cy = center
+    for i, base_r in enumerate((22, 36, 52)):
+        phase = (t + i * 0.22) % 1.0
+        wave = 0.5 + 0.5 * np.sin(phase * 2.0 * np.pi)
+        radius = int(base_r * (0.92 + 0.12 * wave))
+        alpha = 0.22 + 0.18 * wave
+        layer = frame.copy()
+        cv2.circle(layer, (cx, cy), radius, color_bgr, 2, cv2.LINE_AA)
+        frame[:] = cv2.addWeighted(layer, alpha, frame, 1.0 - alpha, 0)
+    cv2.circle(frame, (cx, cy), 10, (255, 255, 255), -1, cv2.LINE_AA)
+    cv2.circle(frame, (cx, cy), 14, color_bgr, 2, cv2.LINE_AA)
+
+
+def draw_receiver_highlight(
+    frame: np.ndarray,
+    center: tuple[int, int],
+    rank: int,
+    color_bgr: tuple[int, int, int],
+    *,
+    alpha: float = 1.0,
+) -> None:
+    """Ring at the receiver feet (BEST gets a white outer ring)."""
+    rx, ry = center
+    ring = 20 if rank == 0 else 14
+    layer = frame.copy()
+    cv2.circle(layer, (rx, ry), ring, color_bgr, 3 if rank == 0 else 2, cv2.LINE_AA)
+    if rank == 0:
+        cv2.circle(layer, (rx, ry), ring + 6, (255, 255, 255), 1, cv2.LINE_AA)
+    if alpha >= 0.99:
+        frame[:] = layer
+    else:
+        frame[:] = cv2.addWeighted(layer, alpha, frame, 1.0 - alpha, 0)
+
+
+def pass_line_label_xy(
+    start: tuple[int, int],
+    end: tuple[int, int],
+    *,
+    along: float = 0.42,
+    offset_px: int = 14,
+) -> tuple[int, int]:
+    """Point beside the pass segment for a distance label."""
+    sx, sy = start
+    ex, ey = end
+    px = sx + along * (ex - sx)
+    py = sy + along * (ey - sy)
+    dx, dy = ex - sx, ey - sy
+    norm = float(np.hypot(dx, dy)) or 1.0
+    return (
+        int(px - dy / norm * offset_px),
+        int(py + dx / norm * offset_px),
+    )
+
+
+def draw_pass_analysis_panel(
+    frame: np.ndarray,
+    *,
+    progress: float,
+    revealed: int,
+    total: int = 3,
+    rank_label: str | None = None,
+    rank_color: tuple[int, int, int] | None = None,
+) -> np.ndarray:
+    """Bottom broadcast-style panel for the freeze / reveal sequence."""
+    h, w = frame.shape[:2]
+    panel_h = 78
+    panel_w = min(460, w - 48)
+    px = (w - panel_w) // 2
+    py = h - panel_h - 62
+
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (px, py), (px + panel_w, py + panel_h), (16, 16, 20), -1)
+    cv2.rectangle(overlay, (px, py), (px + panel_w, py + panel_h), (48, 48, 58), 1)
+    cv2.rectangle(overlay, (px, py), (px + panel_w, py + 4), ROBOFLOW_PURPLE_BGR, -1)
+    frame[:] = cv2.addWeighted(overlay, 0.9, frame, 0.1, 0)
+
+    if revealed == 0:
+        title = "PASS ANALYSIS"
+        step = int(progress * 9) % 3
+        dots = "." * (step + 1)
+        subtitle = f"Scanning open lanes{dots}"
+    else:
+        label = rank_label or f"OPTION {revealed}"
+        title = label
+        subtitle = f"Route {revealed} of {total}  |  ranked by lane + distance"
+
+    draw_text_shadow(
+        frame, title, (px + 18, py + 30),
+        font_scale=0.62, color_bgr=rank_color or (255, 255, 255), thickness=2,
+    )
+    draw_text_shadow(
+        frame, subtitle, (px + 18, py + 58),
+        font_scale=0.46, color_bgr=(175, 175, 185), thickness=1,
+    )
+
+    bar_w = panel_w - 36
+    bar_x = px + 18
+    bar_y = py + panel_h - 12
+    cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + 4), (40, 40, 48), -1)
+    fill = int(bar_w * ease_out_cubic(progress if revealed else (0.35 + 0.65 * progress)))
+    cv2.rectangle(
+        frame,
+        (bar_x, bar_y),
+        (bar_x + max(fill, 6), bar_y + 4),
+        rank_color or ROBOFLOW_PURPLE_BGR,
+        -1,
+    )
+    return frame
 
 
 def draw_pass_alternatives_overlay(
@@ -573,8 +712,9 @@ def draw_pass_alternatives_overlay(
     transformer=None,
     locked_goal_defenders: tuple[int, int] | None = None,
     metric: bool = True,
+    hud_title: str = "PASS ALTERNATIVES  -  top open lanes",
 ) -> np.ndarray:
-    """Dimmed freeze frame with ranked pass-lane arrows (reuses shared draw helpers)."""
+    """Dimmed freeze with ranked lanes — spotlight, pulse, chips, analysis panel."""
     dim = (frame.astype(np.float32) * 0.32).astype(np.uint8)
     options = list(event.options)
     visible = options
@@ -587,22 +727,36 @@ def draw_pass_alternatives_overlay(
     feet = feet_xy(dets)
     carrier_xy = feet[event.carrier.index]
     cx, cy = int(carrier_xy[0]), int(carrier_xy[1])
+    dim = draw_carrier_spotlight(dim, frame, (cx, cy))
+
+    n_total = min(3, len(options))
+    progress = float(np.clip(reveal_progress, 0.0, 1.0))
+    phase_revealed = 0 if revealed_options == 0 else (revealed_options or n_total)
+
+    if revealed_options == 0:
+        draw_carrier_pulse(dim, (cx, cy), progress)
+        draw_score_chip(dim, "ON BALL", (cx, cy - 42), bg_bgr=ROBOFLOW_PURPLE_BGR)
+        dim = draw_pass_analysis_panel(
+            dim, progress=progress, revealed=0, total=n_total,
+        )
+        dim = draw_radar_minimap(
+            dim, dets, transformer, locked_goal_defenders=locked_goal_defenders,
+        )
+        return draw_branding_tag(draw_hud_bar(dim, "PASS ALTERNATIVES"))
+
+    draw_carrier_pulse(dim, (cx, cy), min(1.0, progress * 0.35 + 0.65))
     draw_carrier_ground_ellipse(
         dim,
         carrier_xy,
         transformer=transformer,
         color_bgr=CARRIER_SHADOW_BGR,
         radius_m=0.55,
-        alpha=0.55,
+        alpha=0.45,
         filled=True,
         thickness=2,
+        pulse_t=progress,
     )
 
-    if revealed_options == 0:
-        draw_score_chip(dim, "ON BALL", (cx, cy - 42), bg_bgr=ROBOFLOW_PURPLE_BGR)
-        return draw_hud_bar(dim, "PASS ALTERNATIVES")
-
-    progress = float(np.clip(reveal_progress, 0.0, 1.0))
     for rank, option in enumerate(visible):
         color = RANK_COLORS_BGR[min(rank, len(RANK_COLORS_BGR) - 1)]
         recv_xy = feet[option.receiver_index]
@@ -610,6 +764,8 @@ def draw_pass_alternatives_overlay(
         is_new = rank == len(visible) - 1
         alpha = ease_out_cubic(progress) if is_new else 1.0
         draw_glow_arrow(dim, (cx, cy), (rx, ry), color, thickness=5, alpha=alpha)
+        if alpha > 0.2:
+            draw_receiver_highlight(dim, (rx, ry), rank, color, alpha=alpha)
         if alpha < 0.85:
             continue
         midx, midy = (cx + rx) // 2, (cy + ry) // 2
@@ -617,15 +773,29 @@ def draw_pass_alternatives_overlay(
         chip = f"{label}  {option.score:.2f}"
         if metric:
             chip += f"  {option.length:.1f} m"
+        if option.rivals_in_lane:
+            chip += f"  ({option.rivals_in_lane} riv)"
         draw_score_chip(dim, chip, (midx, midy), bg_bgr=color)
+        if metric:
+            lx, ly = pass_line_label_xy((cx, cy), (rx, ry))
+            draw_text_shadow(
+                dim, f"{option.length:.1f} m", (lx - 18, ly - 6),
+                font_scale=0.58, color_bgr=color, thickness=2,
+            )
 
-    dim = draw_radar_minimap(
+    latest_rank = max(len(visible) - 1, 0)
+    dim = draw_pass_analysis_panel(
         dim,
-        dets,
-        transformer,
-        locked_goal_defenders=locked_goal_defenders,
+        progress=progress,
+        revealed=phase_revealed,
+        total=n_total,
+        rank_label=RANK_LABELS[min(latest_rank, len(RANK_LABELS) - 1)] if visible else None,
+        rank_color=RANK_COLORS_BGR[min(latest_rank, len(RANK_COLORS_BGR) - 1)] if visible else None,
     )
-    return draw_hud_bar(dim, "PASS ALTERNATIVES  -  top open lanes")
+    dim = draw_radar_minimap(
+        dim, dets, transformer, locked_goal_defenders=locked_goal_defenders,
+    )
+    return draw_branding_tag(draw_hud_bar(dim, hud_title))
 
 
 # Re-export for runners that already use motion.draw_radar_minimap
@@ -633,12 +803,18 @@ __all__ = [
     "annotate_ball",
     "annotate_pass_players",
     "draw_carrier_ground_ellipse",
+    "draw_carrier_pulse",
+    "draw_carrier_spotlight",
     "draw_collaboration_web",
     "draw_glow_arrow",
     "draw_hud_bar",
     "draw_pass_alternatives_overlay",
+    "draw_pass_analysis_panel",
     "draw_pass_network_end_card",
     "draw_pass_network_frame_overlays",
     "draw_radar_minimap",
+    "draw_receiver_highlight",
     "CARRIER_SHADOW_BGR",
+    "RANK_COLORS_BGR",
+    "RANK_LABELS",
 ]

@@ -95,12 +95,14 @@ class Mode(Enum):
     SPEED_AND_DISTANCE = 'SPEED_AND_DISTANCE'
     PASS_NETWORK = 'PASS_NETWORK'
     PASS_ALTERNATIVES = 'PASS_ALTERNATIVES'
+    PASS_COMPLETE = 'PASS_COMPLETE'
     ALL = 'ALL'
 
 
 ANALYTICS_MODES = (
     Mode.DIRECTION, Mode.SPEED, Mode.DISTANCE,
-    Mode.SPEED_AND_DISTANCE, Mode.PASS_NETWORK, Mode.PASS_ALTERNATIVES, Mode.ALL,
+    Mode.SPEED_AND_DISTANCE, Mode.PASS_NETWORK, Mode.PASS_ALTERNATIVES,
+    Mode.PASS_COMPLETE, Mode.ALL,
 )
 
 
@@ -117,6 +119,9 @@ def run_analytics_mode(mode: Mode, args: argparse.Namespace) -> None:
         run_pass_network(args)
     elif mode == Mode.PASS_ALTERNATIVES:
         run_pass_alternatives(args)
+    elif mode == Mode.PASS_COMPLETE:
+        args.show_predictions = True
+        run_pass_network(args)
     elif mode == Mode.ALL:
         run_all(args)
     else:
@@ -452,8 +457,22 @@ if __name__ == '__main__':
                         help='(analytics) Spotlight a specific tracker id (SPEED_AND_DISTANCE)')
     parser.add_argument('--ball-model-path', dest='ball_model_path', default=None,
                         help='(analytics) Path to YOLO ball detection .pt (PASS_NETWORK)')
+    parser.add_argument(
+        '--show-predictions', dest='show_predictions', action='store_true',
+        help='(PASS_NETWORK / PASS_COMPLETE) Freeze on detected passes and reveal '
+             'ranked open lanes',
+    )
+    parser.add_argument(
+        '--freeze-quality-threshold', dest='freeze_quality_threshold',
+        type=float, default=0.0,
+        help='(PASS_NETWORK) Min detected-pass quality to trigger a prediction freeze',
+    )
 
     args = parser.parse_args()
+    if not hasattr(args, 'show_predictions'):
+        args.show_predictions = False
+    if not hasattr(args, 'freeze_quality_threshold'):
+        args.freeze_quality_threshold = 0.0
 
     if args.mode in ANALYTICS_MODES:
         run_analytics_mode(args.mode, args)
