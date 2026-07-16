@@ -36,7 +36,7 @@ def kalman_ground_speed_m_s(
     speed_px_val = float(np.hypot(vx, vy))
     if speed_px_val < min_speed_px:
         return 0.0
-    from sports.common.pass_pitch import image_displacement_to_pitch_m
+    from sports.common.homography import image_displacement_to_pitch_m
 
     delta_m = image_displacement_to_pitch_m(feet_px, vel, transformer)
     if delta_m is None:

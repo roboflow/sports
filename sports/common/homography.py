@@ -41,6 +41,14 @@ class RansacViewTransformer(ViewTransformer):
         if src.shape != dst.shape or src.ndim != 2 or src.shape[1] != 2:
             raise ValueError("source/target must be matching (N, 2) arrays")
         if use_ransac and len(src) >= 4:
+            # Prefer forward RANSAC (src→dst). Fall back to inverse-then-invert,
+            # then to a plain least-squares fit.
+            m, _ = cv2.findHomography(
+                src, dst, cv2.RANSAC, ransacReprojThreshold=ransac_thresh
+            )
+            if m is not None:
+                self.m = m
+                return
             m_inv, _ = cv2.findHomography(
                 dst, src, cv2.RANSAC, ransacReprojThreshold=ransac_thresh
             )
@@ -54,6 +62,21 @@ class RansacViewTransformer(ViewTransformer):
         if m is None:
             raise ValueError("Homography matrix could not be calculated.")
         self.m = m
+
+
+def image_displacement_to_pitch_m(
+    feet_px: np.ndarray,
+    displacement_px: np.ndarray,
+    transformer: ViewTransformer | None,
+) -> np.ndarray | None:
+    """Map an image-space displacement at ``feet_px`` into pitch meters."""
+    if transformer is None:
+        return None
+    feet = np.asarray(feet_px, dtype=np.float64).reshape(2)
+    disp = np.asarray(displacement_px, dtype=np.float64).reshape(2)
+    pts = np.stack([feet, feet + disp]).astype(np.float32)
+    pitch_cm = transformer.transform_points(pts)
+    return (pitch_cm[1] - pitch_cm[0]) / 100.0
 
 
 def pitch_vertex_count(config: SoccerPitchConfiguration = PITCH_CONFIG) -> int:

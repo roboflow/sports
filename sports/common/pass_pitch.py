@@ -15,7 +15,6 @@ from sports.configs.soccer import TEAM_LEFT
 
 __all__ = [
     "attack_direction",
-    "image_displacement_to_pitch_m",
     "image_to_pitch_cm",
     "image_to_pitch_m",
     "lane_scoring_transformer_for_frame",
@@ -32,23 +31,6 @@ def image_to_pitch_m(
     if cm is None:
         return None
     return cm / 100.0
-
-
-def image_displacement_to_pitch_m(
-    feet_px: np.ndarray,
-    displacement_px: np.ndarray,
-    transformer: ViewTransformer | None,
-) -> np.ndarray | None:
-    """Map an image-space displacement at ``feet_px`` into pitch meters."""
-    if transformer is None:
-        return None
-    feet = np.asarray(feet_px, dtype=np.float64).reshape(2)
-    disp = np.asarray(displacement_px, dtype=np.float64).reshape(2)
-    p0 = image_to_pitch_m(feet.reshape(1, 2), transformer)
-    p1 = image_to_pitch_m((feet + disp).reshape(1, 2), transformer)
-    if p0 is None or p1 is None:
-        return None
-    return p1[0] - p0[0]
 
 
 def lane_scoring_transformer_for_frame(
