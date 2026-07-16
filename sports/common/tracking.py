@@ -331,6 +331,10 @@ def fit_team_classifier(
     """Sample frames at stride and fit TeamClassifier on player crops."""
     team_classifier = TeamClassifier(device=device)
     crops = []
+    # Dense enough sampling that short --max-frames renders still see both kits.
+    fit_stride = stride
+    if max_frames is not None and max_frames > 0:
+        fit_stride = max(1, min(stride, max(1, int(max_frames) // 40)))
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     frame_idx = 0
     while True:
@@ -340,7 +344,7 @@ def fit_team_classifier(
         frame_idx += 1
         if max_frames is not None and frame_idx > max_frames:
             break
-        if frame_idx % stride != 0:
+        if frame_idx % fit_stride != 0:
             continue
         if det_by_frame is not None:
             dets = det_by_frame.get(frame_idx)
