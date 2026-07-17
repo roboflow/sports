@@ -83,6 +83,50 @@ def test_flyby_teammate_does_not_steal_opponent_turnover():
     )
 
 
+def test_speed_only_path_blip_is_not_a_redirect():
+    """A speed change without an angular turn must not count as a kick/redirect.
+
+    Regression for false #15→#8 on 08fd33: teammate skim had speed_ratio≈2.4 and
+    angle≈11°, which the old speed-only rule treated as a redirect and completed
+    a pass before opponent #3 secured the ball.
+    """
+    from sports.common.possession import (
+        ball_redirected_at_touch,
+        redirect_overrides_transit_flyby,
+        TouchValidationConfig,
+    )
+
+    # Straight-ish flight with a mid-path deceleration (speed blip, tiny angle).
+    ball_path = (
+        [(100.0 + 25 * i, 200.0) for i in range(6)]
+        + [(250.0, 202.0), (255.0, 203.0), (260.0, 204.0)]  # slower, ~tiny bend
+        + [(280.0 + 25 * i, 205.0) for i in range(6)]
+    )
+    frames_by_idx = {
+        i: _frame(players=[(8, 0, (255.0, 220.0))], ball=ball)
+        for i, ball in enumerate(ball_path, 1)
+    }
+    touch = 8  # around the deceleration
+    assert ball_redirected_at_touch(
+        frames_by_idx,
+        touch,
+        lookback=5,
+        lookahead=5,
+        min_angle_deg=28.0,
+        min_speed_ratio=1.35,
+        min_segment_px=10.0,
+    ) is False
+    assert (
+        redirect_overrides_transit_flyby(
+            frames_by_idx,
+            touch,
+            config=TouchValidationConfig(),
+            release_gap_frames=None,
+        )
+        is False
+    )
+
+
 def test_fast_flyby_still_turnovers_to_interceptor():
     """Default transit speed: ball flying past #6 still yields #15→#3 turnover."""
     ball_path = (

@@ -562,6 +562,23 @@ def _ball_touch_path_metrics(
     return angle_deg, speed_ratio
 
 
+def _redirect_signature(
+    angle_deg: float,
+    speed_ratio: float,
+    *,
+    min_angle_deg: float,
+    min_speed_ratio: float,
+) -> bool:
+    """True when path change looks like a kick, not a speed blip on a fly-by.
+
+    Speed alone is not enough: a ball skimming a teammate mid-pass can briefly
+    change measured speed without a real deflection. Require an angular turn.
+    """
+    return min_angle_deg <= angle_deg <= 135.0 or (
+        speed_ratio >= min_speed_ratio and angle_deg >= min_angle_deg
+    )
+
+
 def ball_redirected_at_touch(
     frames_by_idx: dict[int, sv.Detections],
     touch_frame: int,
@@ -583,9 +600,11 @@ def ball_redirected_at_touch(
     if metrics is None:
         return False
     angle_deg, speed_ratio = metrics
-    return (
-        speed_ratio >= min_speed_ratio
-        or (min_angle_deg <= angle_deg <= 135.0)
+    return _redirect_signature(
+        angle_deg,
+        speed_ratio,
+        min_angle_deg=min_angle_deg,
+        min_speed_ratio=min_speed_ratio,
     )
 
 
@@ -640,16 +659,15 @@ def redirect_overrides_transit_flyby(
     if (
         release_gap_frames is not None
         and release_gap_frames >= config.gravity_flyby_min_release_gap_frames
+        and speed_ratio > 4.0
     ):
-        if speed_ratio > 4.0:
-            return False
-        return (
-            min_angle <= angle_deg <= 135.0
-            or (speed_ratio >= min_ratio and angle_deg >= min_angle)
-        )
-    return (
-        speed_ratio >= min_ratio
-        or (min_angle <= angle_deg <= 135.0)
+        # Teleport / sparse-detection speed spike during a long flight.
+        return False
+    return _redirect_signature(
+        angle_deg,
+        speed_ratio,
+        min_angle_deg=min_angle,
+        min_speed_ratio=min_ratio,
     )
 
 
