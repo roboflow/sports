@@ -4,7 +4,18 @@ import cv2
 import supervision as sv
 import numpy as np
 
-from sports.configs.soccer import SoccerPitchConfiguration
+from sports.configs.soccer import SoccerPitchConfiguration, PLAYER_VIS_COLORS
+
+
+def create_player_ellipse_annotator(thickness: int = 2) -> sv.EllipseAnnotator:
+    """Return a ground-contact ellipse annotator for player detections."""
+    return sv.EllipseAnnotator(
+        color=sv.ColorPalette.from_hex(PLAYER_VIS_COLORS),
+        thickness=thickness,
+    )
+
+
+player_ellipse_annotator = create_player_ellipse_annotator()
 
 
 def draw_pitch(

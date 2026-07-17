@@ -3,23 +3,28 @@ from enum import Enum
 from typing import Iterator, List
 
 import os
+
 import cv2
 import numpy as np
 import supervision as sv
 from tqdm import tqdm
 from ultralytics import YOLO
 
-from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
+from sports.annotators.soccer import draw_pitch, draw_points_on_pitch, player_ellipse_annotator
 from sports.common.ball import BallTracker, BallAnnotator
 from sports.common.team import TeamClassifier
+from sports.common.tracking import get_crops, resolve_goalkeepers_team_id
 from sports.common.view import ViewTransformer
 from sports.configs.soccer import (
     BALL_CLASS_ID,
     GOALKEEPER_CLASS_ID,
     PLAYER_CLASS_ID,
+    PLAYER_VIS_COLORS,
     REFEREE_CLASS_ID,
     SoccerPitchConfiguration,
 )
+
+from direction import run_direction
 
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
@@ -29,7 +34,7 @@ BALL_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-ball-detecti
 STRIDE = 60
 CONFIG = SoccerPitchConfiguration()
 
-COLORS = ['#FF1493', '#00BFFF', '#FF6347', '#FFD700']
+COLORS = PLAYER_VIS_COLORS
 VERTEX_LABEL_ANNOTATOR = sv.VertexLabelAnnotator(
     color=[sv.Color.from_hex(color) for color in CONFIG.colors],
     text_color=sv.Color.from_hex('#FFFFFF'),
@@ -52,10 +57,7 @@ BOX_ANNOTATOR = sv.BoxAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
     thickness=2
 )
-ELLIPSE_ANNOTATOR = sv.EllipseAnnotator(
-    color=sv.ColorPalette.from_hex(COLORS),
-    thickness=2
-)
+ELLIPSE_ANNOTATOR = player_ellipse_annotator
 BOX_LABEL_ANNOTATOR = sv.LabelAnnotator(
     color=sv.ColorPalette.from_hex(COLORS),
     text_color=sv.Color.from_hex('#FFFFFF'),
@@ -81,53 +83,17 @@ class Mode(Enum):
     PLAYER_TRACKING = 'PLAYER_TRACKING'
     TEAM_CLASSIFICATION = 'TEAM_CLASSIFICATION'
     RADAR = 'RADAR'
+    DIRECTION = 'DIRECTION'
 
 
-def get_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
-    """
-    Extract crops from the frame based on detected bounding boxes.
-
-    Args:
-        frame (np.ndarray): The frame from which to extract crops.
-        detections (sv.Detections): Detected objects with bounding boxes.
-
-    Returns:
-        List[np.ndarray]: List of cropped images.
-    """
-    return [sv.crop_image(frame, xyxy) for xyxy in detections.xyxy]
+ANALYTICS_MODES = (Mode.DIRECTION,)
 
 
-def resolve_goalkeepers_team_id(
-    players: sv.Detections,
-    players_team_id: np.array,
-    goalkeepers: sv.Detections
-) -> np.ndarray:
-    """
-    Resolve the team IDs for detected goalkeepers based on the proximity to team
-    centroids.
-
-    Args:
-        players (sv.Detections): Detections of all players.
-        players_team_id (np.array): Array containing team IDs of detected players.
-        goalkeepers (sv.Detections): Detections of goalkeepers.
-
-    Returns:
-        np.ndarray: Array containing team IDs for the detected goalkeepers.
-
-    This function calculates the centroids of the two teams based on the positions of
-    the players. Then, it assigns each goalkeeper to the nearest team's centroid by
-    calculating the distance between each goalkeeper and the centroids of the two teams.
-    """
-    goalkeepers_xy = goalkeepers.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
-    players_xy = players.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
-    team_0_centroid = players_xy[players_team_id == 0].mean(axis=0)
-    team_1_centroid = players_xy[players_team_id == 1].mean(axis=0)
-    goalkeepers_team_id = []
-    for goalkeeper_xy in goalkeepers_xy:
-        dist_0 = np.linalg.norm(goalkeeper_xy - team_0_centroid)
-        dist_1 = np.linalg.norm(goalkeeper_xy - team_1_centroid)
-        goalkeepers_team_id.append(0 if dist_0 < dist_1 else 1)
-    return np.array(goalkeepers_team_id)
+def run_analytics_mode(mode: Mode, args: argparse.Namespace) -> None:
+    if mode == Mode.DIRECTION:
+        run_direction(args)
+    else:
+        raise NotImplementedError(f"Mode {mode} is not an analytics mode.")
 
 
 def render_radar(
@@ -426,10 +392,36 @@ if __name__ == '__main__':
     parser.add_argument('--target_video_path', type=str, required=True)
     parser.add_argument('--device', type=str, default='cpu')
     parser.add_argument('--mode', type=Mode, default=Mode.PLAYER_DETECTION)
+
+    parser.add_argument('--max-frames', dest='max_frames', type=int, default=None,
+                        help='(analytics) Cap frames processed (None = all)')
+    parser.add_argument('--tracker', default='botsort',
+                        choices=('bytetrack', 'botsort', 'botsort_nocmc'),
+                        help='(analytics) Multi-object tracker backend')
+    parser.add_argument('--player-detector', dest='player_detector', default='yolo',
+                        choices=('yolo', 'inference'),
+                        help='(analytics) Player detection backend')
+    parser.add_argument('--player-model-path', dest='player_model_path', default=None,
+                        help='(analytics) Path to YOLO player detection .pt')
+    parser.add_argument('--player-model-id', dest='player_model_id',
+                        default='football-players-detection-3zvbc/11',
+                        help='(analytics) Roboflow Inference model id for player detection')
+    parser.add_argument('--api-key', dest='api_key', default=None,
+                        help='(analytics) Roboflow API key (also read from ROBOFLOW_API_KEY)')
+    parser.add_argument('--cache', dest='cache', action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help='(analytics) Cache per-frame detections on disk')
+    parser.add_argument('--cache-dir', dest='cache_dir', default=None,
+                        help='(analytics) Directory for the on-disk cache')
+
     args = parser.parse_args()
-    main(
-        source_video_path=args.source_video_path,
-        target_video_path=args.target_video_path,
-        device=args.device,
-        mode=args.mode
-    )
+
+    if args.mode in ANALYTICS_MODES:
+        run_analytics_mode(args.mode, args)
+    else:
+        main(
+            source_video_path=args.source_video_path,
+            target_video_path=args.target_video_path,
+            device=args.device,
+            mode=args.mode
+        )

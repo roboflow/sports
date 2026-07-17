@@ -1,2 +1,4 @@
 ultralytics
 gdown
+# PyPI wheel ships without the Python package; install from source:
+trackers @ git+https://github.com/roboflow/trackers.git

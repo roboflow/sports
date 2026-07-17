@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Generator, Iterable, List, TypeVar
+from dataclasses import dataclass
 
 import numpy as np
 import supervision as sv
@@ -10,11 +11,22 @@ from sklearn.cluster import KMeans
 from tqdm import tqdm
 from transformers import AutoProcessor, SiglipVisionModel
 
-from sports.configs.soccer import TEAM_NONE
+from sports.configs.soccer import (
+    GOALKEEPER_CLASS_ID,
+    PLAYER_CLASS_ID,
+    TEAM_NONE,
+)
 
 V = TypeVar("V")
 
 SIGLIP_MODEL_PATH = 'google/siglip-base-patch16-224'
+
+
+@dataclass
+class TeamLocks:
+    """Clip-level team lock for direction mode."""
+
+    team_lock: dict
 
 
 def create_batches(
@@ -203,4 +215,61 @@ def relock_detection_teams(
         confidence=dets.confidence,
         data=data,
     )
+
+
+def clone_team_frames(
+    frames: list[tuple[int, sv.Detections]],
+) -> list[tuple[int, sv.Detections]]:
+    """Copy tracked frames with fresh ``data`` dicts for lock derivation."""
+    cloned: list[tuple[int, sv.Detections]] = []
+    for frame_idx, dets in frames:
+        data = dict(dets.data) if dets.data else {}
+        if "team" in data:
+            data["team"] = np.array(data["team"], dtype=int)
+        cloned.append(
+            (
+                frame_idx,
+                sv.Detections(
+                    xyxy=dets.xyxy,
+                    class_id=dets.class_id,
+                    tracker_id=dets.tracker_id,
+                    confidence=dets.confidence,
+                    data=data,
+                ),
+            )
+        )
+    return cloned
+
+
+def _fill_goalkeeper_teams_by_centroid(
+    frames: list[tuple[int, sv.Detections]],
+) -> None:
+    """Fill goalkeeper team ids per frame using the centroid rule."""
+    from sports.common.tracking import resolve_goalkeepers_team_id
+
+    for _, dets in frames:
+        if dets.data is None or len(dets) == 0 or dets.tracker_id is None:
+            continue
+        team = np.asarray(
+            dets.data.get("team", np.full(len(dets), TEAM_NONE)), dtype=int
+        )
+        gk_mask = dets.class_id == GOALKEEPER_CLASS_ID
+        pl_mask = dets.class_id == PLAYER_CLASS_ID
+        if not gk_mask.any():
+            continue
+        if not ((team[pl_mask] == 0).any() and (team[pl_mask] == 1).any()):
+            continue
+        gk_teams = resolve_goalkeepers_team_id(
+            dets[pl_mask], team[pl_mask], dets[gk_mask]
+        )
+        team[gk_mask] = gk_teams
+        dets.data["team"] = team
+
+
+def derive_tracklet_team_lock(
+    frames: list[tuple[int, sv.Detections]],
+) -> dict[int, int]:
+    """Derive clip-level team lock with centroid goalkeeper fill."""
+    _fill_goalkeeper_teams_by_centroid(frames)
+    return lock_teams_by_tracklet_majority(frames)
 
