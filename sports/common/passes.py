@@ -53,6 +53,7 @@ from sports.common.possession import (
     ball_departed_for_one_touch,
     ball_redirected_at_touch,
     ball_xy,
+    bbox_center_xy,
     find_active_carrier,
     find_control_carrier,
     find_reception_carrier,
@@ -65,7 +66,7 @@ from sports.common.possession import (
     redirect_overrides_transit_flyby,
 )
 from sports.configs.soccer import GOALKEEPER_CLASS_ID as ROLE_GOALKEEPER
-from sports.common.kinematics import feet_xy, player_mask
+
 DetectionIterator = Iterator[tuple[int, sv.Detections]]
 
 
@@ -98,6 +99,9 @@ class PassDetectionConfig:
     one_touch_release_window_frames: int = 12
     one_touch_depart_min_px: float = 35.0
     adjacent_pass_max_gap_frames: int = 15  # quick plays need control at receiver
+    # Gravity-arc fly-by veto this many frames after a known release (keep short —
+    # bystander skims happen early; do not reuse adjacent_pass_max_gap_frames).
+    gravity_flyby_min_release_gap_frames: int = 3
     aerial_dy_threshold_px: float = AERIAL_DY_THRESHOLD_PX
     max_plausible_travel_m: float = 40.0
     min_long_gap_opponent_control_streak: int = 2
@@ -159,6 +163,9 @@ class PassDetectionConfig:
             adjacent_pass_max_gap_frames=max(
                 1, round(self.adjacent_pass_max_gap_frames * scale)
             ),
+            gravity_flyby_min_release_gap_frames=max(
+                1, round(self.gravity_flyby_min_release_gap_frames * scale)
+            ),
             aerial_dy_threshold_px=self.aerial_dy_threshold_px,
             max_plausible_travel_m=self.max_plausible_travel_m,
             min_long_gap_opponent_control_streak=self.min_long_gap_opponent_control_streak,
@@ -194,7 +201,7 @@ class PassDetectionConfig:
             max_plausible_transit_speed_m_s=self.max_plausible_transit_speed_m_s,
             ball_speed_lookback_frames=self.ball_speed_lookback_frames,
             ball_speed_min_lookback_frames=self.ball_speed_min_lookback_frames,
-            gravity_flyby_min_release_gap_frames=self.adjacent_pass_max_gap_frames,
+            gravity_flyby_min_release_gap_frames=self.gravity_flyby_min_release_gap_frames,
         )
 
 @dataclass(frozen=True)
@@ -207,12 +214,6 @@ class InferredPass:
     team: int
     gap_frames: int
     pass_length_m: float | None
-    quality_score: float | None
-    openness: float | None
-    forward_gain: float | None
-    rivals_in_lane: int | None
-    motion_alignment: float | None
-    receiver_space: float | None
     touch_kind: str = "control"
 
 
@@ -235,38 +236,6 @@ class PossessionScanResult:
 
     passes: tuple[InferredPass, ...]
     turnovers: tuple[InferredTurnover, ...]
-
-
-class PassQualityScorer:
-    """Optional lane-quality decoration for inferred passes.
-
-    PR7 keeps this as a no-op so pass *detection* does not depend on
-    ``pass_options`` / alternatives scoring. PR8 restores real scoring via
-    ``score_pass_options``. Detection never gates on these fields.
-    """
-
-    def __init__(
-        self,
-        *,
-        metric: bool = True,
-        transformers: dict[int, object] | None = None,
-        keypoints_by_frame: dict[int, sv.KeyPoints | None] | None = None,
-        pitch_confidence: float = 0.9,
-    ) -> None:
-        self._metric = metric
-        self._transformers = transformers or {}
-        self._keypoints_by_frame = keypoints_by_frame or {}
-        self._pitch_confidence = pitch_confidence
-
-    def option_for_receiver(
-        self,
-        frame_idx: int,
-        dets: sv.Detections,
-        carrier: Carrier,
-        receiver_tid: int,
-    ) -> None:
-        """Return lane quality for ``receiver_tid``, or ``None`` when unavailable."""
-        return None
 
 
 def _ball_travel(
@@ -839,14 +808,12 @@ def _try_emit_pass(
     events: list[InferredPass],
     *,
     release_frame: int,
-    release_dets: sv.Detections,
     release_carrier: Carrier,
     passer_tid: int,
     receiver_tid: int,
     arrival_frame: int,
     arrival_carrier: Carrier,
     touch_kind: str,
-    scorer: PassQualityScorer,
     config: PassDetectionConfig,
     metric: bool,
     transformers: dict[int, object],
@@ -877,9 +844,6 @@ def _try_emit_pass(
     ):
         return False
 
-    option = scorer.option_for_receiver(
-        release_frame, release_dets, release_carrier, receiver_tid
-    )
     events.append(
         InferredPass(
             frame_idx=release_frame,
@@ -887,26 +851,11 @@ def _try_emit_pass(
             receiver_tid=receiver_tid,
             team=int(release_carrier.team),
             gap_frames=gap,
-            pass_length_m=_pass_length_m(option, metric),
-            quality_score=float(option.score) if option is not None else None,
-            openness=float(option.openness) if option is not None else None,
-            forward_gain=float(option.forward_gain) if option is not None else None,
-            rivals_in_lane=int(option.rivals_in_lane) if option is not None else None,
-            motion_alignment=(
-                float(option.motion_alignment) if option is not None else None
-            ),
-            receiver_space=float(option.receiver_space) if option is not None else None,
+            pass_length_m=float(travel) if metric else None,
             touch_kind=touch_kind,
         )
     )
     return True
-
-
-def _pass_length_m(option: object | None, metric: bool) -> float | None:
-    if option is None or not metric:
-        return None
-    length = getattr(option, "length", None)
-    return float(length) if length is not None else None
 
 
 def _active_carrier(
@@ -1573,12 +1522,11 @@ def _promote_pre_flight_release(
         return
     if (
         other_state is not None
-        and other_state.in_flight
         and other_state.release is not None
         and touch_frame > other_state.release[0]
-        and touch_carrier.distance > config.control_max_distance_px
     ):
-        # Opponent attack in flight; distant reception was a fly-by, not a release.
+        # Opponent still owns a pending release — never steal from a skim/fly-by,
+        # even when the ball passes inside the control radius.
         return
     state.release = (touch_frame, touch_dets, touch_carrier, touch_tid)
     state.release_is_one_touch = False
@@ -1701,11 +1649,11 @@ def _promote_one_touch_reception_release(
         return
     if (
         other_state is not None
-        and other_state.in_flight
         and other_state.release is not None
         and touch_frame > other_state.release[0]
-        and touch_carrier.distance > config.reception_max_distance_px
     ):
+        # Opponent still owns a pending release — one-touch promote would mint a
+        # false passer from a fly-by.
         return
     state.release = (touch_frame, touch_dets, touch_carrier, touch_tid)
     state.release_is_one_touch = True
@@ -2265,32 +2213,47 @@ def _try_emit_turnover(
         and release_carrier is not None
         and release_frame is not None
     ):
-        int_dets = frames_by_idx.get(interception_frame)
-        if int_dets is None:
-            return False
-        transformer = transformers.get(interception_frame) if metric and transformers else None
-        int_carrier, int_kind = _active_carrier(
-            int_dets, transformer=transformer, config=config
-        )
-        int_kind = int_kind or "reception"
-        if (
-            int_carrier is None
-            or int_dets.tracker_id is None
-            or int(int_dets.tracker_id[int_carrier.index]) != interceptor_tid
-            or not _touch_valid_or_redirect(
+        # Prefer a frame where the interceptor is valid under the release fly-by
+        # gates (settled ball), not merely the first secured proximity frame.
+        chosen: tuple[int, sv.Detections, Carrier, str] | None = None
+        search_end = interception_frame + config.turnover_recovery_window_frames
+        for fi in range(interception_frame, search_end + 1):
+            int_dets = frames_by_idx.get(fi)
+            if int_dets is None:
+                continue
+            transformer = (
+                transformers.get(fi) if metric and transformers else None
+            )
+            int_carrier, int_kind = _active_carrier(
+                int_dets, transformer=transformer, config=config
+            )
+            int_kind = int_kind or "reception"
+            if (
+                int_carrier is None
+                or int_dets.tracker_id is None
+                or int(int_dets.tracker_id[int_carrier.index]) != interceptor_tid
+            ):
+                continue
+            if _touch_valid_or_redirect(
                 int_dets,
                 int_carrier,
                 touch_kind=int_kind,
                 frames_by_idx=frames_by_idx,
-                frame_idx=interception_frame,
+                frame_idx=fi,
                 config=config,
                 transformers=transformers or {},
                 metric=metric,
                 fps=fps,
                 release_ball=release_carrier.ball,
                 release_frame=release_frame,
-            )
-        ):
+            ):
+                chosen = (fi, int_dets, int_carrier, int_kind)
+                break
+        if chosen is None:
+            return False
+        interception_frame = chosen[0]
+        gap = interception_frame - release_frame
+        if gap < config.min_turnover_gap_frames or gap > config.max_pass_gap_frames:
             return False
 
     if _recent_turnover_duplicate(
@@ -2396,7 +2359,6 @@ def _try_emit_intermediate_hop(
     carrier: Carrier,
     tid: int,
     touch_kind: str,
-    scorer: PassQualityScorer,
     config: PassDetectionConfig,
     metric: bool,
     transformers: dict[int, object],
@@ -2405,7 +2367,7 @@ def _try_emit_intermediate_hop(
     release = state.release
     if release is None or touch_kind != "control":
         return False
-    release_frame, release_dets, release_carrier, release_tid = release
+    release_frame, _release_dets, release_carrier, release_tid = release
     if release_tid == tid:
         return False
     if (
@@ -2417,14 +2379,12 @@ def _try_emit_intermediate_hop(
     return _try_emit_pass(
         passes,
         release_frame=release_frame,
-        release_dets=release_dets,
         release_carrier=release_carrier,
         passer_tid=release_tid,
         receiver_tid=tid,
         arrival_frame=frame_idx,
         arrival_carrier=carrier,
         touch_kind=touch_kind,
-        scorer=scorer,
         config=config,
         metric=metric,
         transformers=transformers,
@@ -2483,18 +2443,23 @@ def _should_credit_team_possession(
     metric: bool,
     fps: float,
 ) -> bool:
-    """Whether a touch updates last-possession during the opponent's in-flight release.
+    """Whether a touch updates last-possession during the opponent's pending release.
 
-    Fly-by receptions while the other team is playing a long ball must not anchor
-    turnover snapshots — only redirects or real control at the feet count.
+    Fly-by receptions while the other team still owns a release must not anchor
+    turnover snapshots or mint a new passer — only redirects or real control at
+    the feet count. Key off ``release`` (not ``in_flight``): in_flight is only
+    set on frames where *this* team has no valid carrier, so it stays False while
+    an opponent skim is the active carrier.
     """
-    if not (other_state.in_flight and other_state.release is not None):
+    if other_state.release is None:
+        return True
+    release_frame, _, release_carrier, _ = other_state.release
+    if frame_idx <= release_frame:
         return True
     if redirect_touch:
         return True
     if touch_kind != "control":
         return False
-    release_frame, _, release_carrier, _ = other_state.release
     return _touch_valid_or_redirect(
         dets,
         carrier,
@@ -2801,7 +2766,6 @@ def _first_valid_touch_frame(
 def scan_possession_events(
     detections_iter: DetectionIterator,
     *,
-    scorer: PassQualityScorer,
     config: PassDetectionConfig = PassDetectionConfig(),
     metric: bool = True,
     transformers: dict[int, object] | None = None,
@@ -3010,75 +2974,81 @@ def scan_possession_events(
                     config=config,
                 )
 
-        state.in_flight = False
-        min_control = _min_control_frames_for(dets, carrier, config=config)
+        # Fly-by during the opponent's in-flight release must not mint a new
+        # passer via last_touch / control streak / confirm (false #6→#3).
+        # Still fall through so an in-progress teammate arrival can complete.
+        if credit_possession:
+            state.in_flight = False
+            min_control = _min_control_frames_for(dets, carrier, config=config)
 
-        if touch_kind == "control":
-            state.reception_streak = 0
-            _update_control_streak(state, tid)
-            skip_last_touch_update = False
-            if state.last_touch is not None:
-                prev_frame, _, _, prev_tid = state.last_touch
-                if (
-                    prev_tid != tid
-                    and state.control_streak < min_control
-                    and frame_idx - prev_frame <= config.one_touch_release_window_frames
-                ):
-                    skip_last_touch_update = True
-            if not skip_last_touch_update:
-                state.last_touch = (frame_idx, dets, carrier, tid)
-            if state.control_streak >= min_control:
-                if (
-                    state.control_streak == min_control
-                    and state.release is not None
-                    and state.release[3] != tid
-                ):
-                    _try_emit_intermediate_hop(
-                        passes,
-                        state,
-                        frame_idx=frame_idx,
-                        dets=dets,
-                        carrier=carrier,
-                        tid=tid,
-                        touch_kind=touch_kind,
-                        scorer=scorer,
-                        config=config,
-                        metric=metric,
-                        transformers=transformers,
-                    )
-                    _confirm_release(state, frame_idx, dets, carrier, tid)
-                    state.arrival_candidate_tid = -1
-                    state.arrival_streak = 0
-                    state.arrival_control_streak = 0
-                else:
-                    _on_confirmed_possession(
-                        state, frame_idx, dets, carrier, tid
-                    )
-                if state.control_streak == min_control:
-                    _queue_turnover_emit(
-                        pending_turnovers,
-                        losing_team=1 - team,
-                        losing_state=other_state,
-                        possessing_state=state,
-                        interceptor_tid=tid,
-                        interceptor_team=team,
-                        interception_frame=frame_idx,
-                        frames_by_idx=frames_by_idx,
-                        config=config,
-                        transformers=transformers,
-                        metric=metric,
-                        fps=fps,
-                    )
-        else:
-            if tid == state.possession_tid:
-                state.reception_streak += 1
+            if touch_kind == "control":
+                state.reception_streak = 0
+                _update_control_streak(state, tid)
+                skip_last_touch_update = False
+                if state.last_touch is not None:
+                    prev_frame, _, _, prev_tid = state.last_touch
+                    if (
+                        prev_tid != tid
+                        and state.control_streak < min_control
+                        and frame_idx - prev_frame
+                        <= config.one_touch_release_window_frames
+                    ):
+                        skip_last_touch_update = True
+                if not skip_last_touch_update:
+                    state.last_touch = (frame_idx, dets, carrier, tid)
+                if state.control_streak >= min_control:
+                    if (
+                        state.control_streak == min_control
+                        and state.release is not None
+                        and state.release[3] != tid
+                    ):
+                        _try_emit_intermediate_hop(
+                            passes,
+                            state,
+                            frame_idx=frame_idx,
+                            dets=dets,
+                            carrier=carrier,
+                            tid=tid,
+                            touch_kind=touch_kind,
+                            config=config,
+                            metric=metric,
+                            transformers=transformers,
+                        )
+                        _confirm_release(state, frame_idx, dets, carrier, tid)
+                        state.arrival_candidate_tid = -1
+                        state.arrival_streak = 0
+                        state.arrival_control_streak = 0
+                    else:
+                        _on_confirmed_possession(
+                            state, frame_idx, dets, carrier, tid
+                        )
+                    if state.control_streak == min_control:
+                        _queue_turnover_emit(
+                            pending_turnovers,
+                            losing_team=1 - team,
+                            losing_state=other_state,
+                            possessing_state=state,
+                            interceptor_tid=tid,
+                            interceptor_team=team,
+                            interception_frame=frame_idx,
+                            frames_by_idx=frames_by_idx,
+                            config=config,
+                            transformers=transformers,
+                            metric=metric,
+                            fps=fps,
+                        )
             else:
-                state.possession_tid = tid
-                state.reception_streak = 1
+                if tid == state.possession_tid:
+                    state.reception_streak += 1
+                else:
+                    state.possession_tid = tid
+                    state.reception_streak = 1
+                state.control_streak = 0
+                state.last_touch = (frame_idx, dets, carrier, tid)
+                if _is_goalkeeper(dets, carrier.index):
+                    _on_confirmed_possession(state, frame_idx, dets, carrier, tid)
+        else:
             state.control_streak = 0
-            state.last_touch = (frame_idx, dets, carrier, tid)
-            if _is_goalkeeper(dets, carrier.index):
-                _on_confirmed_possession(state, frame_idx, dets, carrier, tid)
 
         release = state.release
         if release is None:
@@ -3228,14 +3198,12 @@ def scan_possession_events(
             if not turnover_emitted and tid == state.arrival_candidate_tid and _try_emit_pass(
                 passes,
                 release_frame=release_frame,
-                release_dets=release_dets,
                 release_carrier=release_carrier,
                 passer_tid=release_tid,
                 receiver_tid=tid,
                 arrival_frame=frame_idx,
                 arrival_carrier=carrier,
                 touch_kind=touch_kind,
-                scorer=scorer,
                 config=config,
                 metric=metric,
                 transformers=transformers,
@@ -3262,14 +3230,12 @@ def scan_possession_events(
         if _try_emit_pass(
             passes,
             release_frame=release_frame,
-            release_dets=release_dets,
             release_carrier=release_carrier,
             passer_tid=release_tid,
             receiver_tid=tid,
             arrival_frame=frame_idx,
             arrival_carrier=carrier,
             touch_kind=touch_kind,
-            scorer=scorer,
             config=config,
             metric=metric,
             transformers=transformers,

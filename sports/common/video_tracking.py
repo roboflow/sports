@@ -28,7 +28,6 @@ from sports.common.kinematics import (
 )
 from sports.common.passes import (
     PassDetectionConfig,
-    PassQualityScorer,
     PossessionScanResult,
     scan_possession_events,
 )
@@ -80,7 +79,6 @@ class VideoTrackingSession:
     _ball_by_frame: dict | None = field(default=None, repr=False)
     _pass_frames: list | None = field(default=None, repr=False)
     _pass_scan: PossessionScanResult | None = field(default=None, repr=False)
-    _pass_scorer: PassQualityScorer | None = field(default=None, repr=False)
     _team_lock: TeamLocks | None = field(default=None, repr=False)
     _speed_transforms: dict | None = field(default=None, repr=False)
     _gap_filled_transforms: dict | None = field(default=None, repr=False)
@@ -255,19 +253,6 @@ class VideoTrackingSession:
     def pass_by_frame(self) -> dict[int, sv.Detections]:
         return dict(self.pass_frames())
 
-    @property
-    def pass_scorer(self) -> PassQualityScorer:
-        if self._pass_scorer is None:
-            transformers = (
-                self.gap_filled_transforms_by_frame if self.kp_by_frame else None
-            )
-            self._pass_scorer = PassQualityScorer(
-                transformers=transformers,
-                keypoints_by_frame=self.kp_by_frame,
-                pitch_confidence=0.9,
-            )
-        return self._pass_scorer
-
     def pass_scan(self) -> PossessionScanResult:
         if self._pass_scan is None:
             config = PassDetectionConfig().for_frame_rate(self.fps)
@@ -276,7 +261,6 @@ class VideoTrackingSession:
             )
             self._pass_scan = scan_possession_events(
                 iter(self.pass_frames()),
-                scorer=self.pass_scorer,
                 config=config,
                 metric=True,
                 transformers=transformers,

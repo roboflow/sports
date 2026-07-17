@@ -245,7 +245,9 @@ class TouchValidationConfig:
     # Long in-flight path from a known release point: slow average inbound speed
     # means the ball is dropping through a zone, not possession at the feet.
     transit_min_release_travel_px: float = 450.0
-    transit_min_release_gap_frames: int = 50
+    # Align with gravity-flyby window so medium-length passes (≈15–50f) still
+    # veto slow drop-throughs; 50f was too late for typical interceptions.
+    transit_min_release_gap_frames: int = 15
     transit_release_flyby_max_speed_px_per_frame: float = 8.0
     # Ball path redirect at a touch (one-touch kick / intercept) vs straight fly-by.
     redirect_lookback_frames: int = 5
@@ -254,7 +256,8 @@ class TouchValidationConfig:
     redirect_min_speed_ratio: float = 1.35
     redirect_min_segment_px: float = 10.0
     # In-flight opponent touch during a known release: no path redirect ⇒ gravity fly-by.
-    gravity_flyby_min_release_gap_frames: int = 15
+    # Keep this small — the first ~0.5s of a pass is when skims past bystanders happen.
+    gravity_flyby_min_release_gap_frames: int = 3
 
 
 def nearest_player_tid(dets: sv.Detections, ball: np.ndarray) -> int | None:
@@ -739,6 +742,33 @@ def is_valid_possession_touch(
         )
     ):
         return False
+    # Known pass still in flight, no redirect, ball still moving: skim/fly-by,
+    # not settled control (catches brief proximity pauses that break gravity-arc).
+    if (
+        release_ball is not None
+        and release_gap_frames is not None
+        and release_gap_frames >= config.gravity_flyby_min_release_gap_frames
+        and frames_by_idx is not None
+        and frame_idx is not None
+        and not ball_redirected_at_touch(
+            frames_by_idx,
+            frame_idx,
+            lookback=config.redirect_lookback_frames,
+            lookahead=config.redirect_lookahead_frames,
+            min_angle_deg=config.redirect_min_angle_deg,
+            min_speed_ratio=config.redirect_min_speed_ratio,
+            min_segment_px=config.redirect_min_segment_px,
+        )
+    ):
+        prev = frames_by_idx.get(frame_idx - 1)
+        prev_ball = ball_xy(prev) if prev is not None else None
+        if prev_ball is not None:
+            step_px = float(
+                np.hypot(ball[0] - prev_ball[0], ball[1] - prev_ball[1])
+            )
+            # Real traps are near-stationary in image space; skims keep moving.
+            if step_px >= 2.5:
+                return False
     if touch_kind == "control" and is_aerial_touch(
         dets, carrier, threshold_px=config.aerial_dy_threshold_px
     ):

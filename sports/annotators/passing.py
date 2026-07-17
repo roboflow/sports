@@ -280,7 +280,7 @@ def _draw_pass_highlights(
         if p.frame_idx <= frame_idx <= p.frame_idx + p.gap_frames
     ]
     if len(in_flight) > 1:
-        in_flight.sort(key=lambda p: (p.frame_idx, -(p.quality_score or 0.0)))
+        in_flight.sort(key=lambda p: p.frame_idx)
         in_flight = in_flight[:1]
     highlight_passes = tuple(in_flight) if in_flight else passes
 
@@ -435,10 +435,6 @@ def draw_pass_network_frame_overlays(
         )
 
 
-def _format_quality(q: float | None) -> str:
-    return f"{q:.2f}" if q is not None else "—"
-
-
 def _player_teams(network: PassNetwork) -> dict[int, int]:
     teams: dict[int, int] = {}
     for player in network.players:
@@ -537,7 +533,7 @@ def draw_pass_network_end_card(
     for rank, link in enumerate(network.links[:top_n], 1):
         line = (
             f"{rank}.  #{link.passer_tid} -> #{link.receiver_tid}"
-            f"   {link.count} passes  |  Avg Quality: {_format_quality(link.avg_quality)}"
+            f"   {link.count} passes"
         )
         draw_text_shadow(
             card, line, (44, y_links + rank * 38),
