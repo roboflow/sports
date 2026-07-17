@@ -2048,7 +2048,12 @@ def _promote_redirect_one_touch_release(
     carrier: Carrier,
     tid: int,
 ) -> None:
-    """Credit an instant redirect touch as a one-touch release anchor."""
+    """Credit an instant redirect touch as a one-touch release anchor.
+
+    Safe during an opponent in-flight release (real intercept). Must not run
+    when the opponent has already settled — a teleported ball can look like a
+    redirect and steal their passer anchor.
+    """
     if state.release is not None and state.release[3] != tid:
         return
     state.release = (frame_idx, dets, carrier, tid)
@@ -2947,7 +2952,13 @@ def scan_possession_events(
         if credit_possession:
             state.last_possession_frame = frame_idx
             state.last_possessor_tid = tid
-        if redirect_touch:
+        # Allow one-touch release on a true intercept (opponent release still
+        # in-flight). Block it when the opponent has already settled possession
+        # — a teleported ball box can fake a redirect and steal their anchor
+        # (false #8 release after #3→#25, which then fly-by-vetoes #25→#27).
+        if redirect_touch and (
+            other_state.release is None or other_state.in_flight
+        ):
             _promote_redirect_one_touch_release(
                 state, frame_idx, dets, carrier, tid
             )
