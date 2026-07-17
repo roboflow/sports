@@ -131,40 +131,41 @@ def _render_pass_network(args, session: VideoTrackingSession) -> None:
                     and frame_idx in events_by_frame
                 ):
                     event = events_by_frame[frame_idx]
-                    qs = event.quality_score
-                    if qs is not None and qs >= freeze_quality_threshold:
-                        freeze_carrier = carrier_from_tracker_id(dets, event.passer_tid)
-                        if freeze_carrier is not None:
-                            options = scorer.top_options(
-                                frame_idx, dets, freeze_carrier, k=3
+                    freeze_carrier = carrier_from_tracker_id(dets, event.passer_tid)
+                    if freeze_carrier is not None:
+                        options = scorer.top_options(
+                            frame_idx, dets, freeze_carrier, k=3
+                        )
+                        if (
+                            options
+                            and options[0].score >= freeze_quality_threshold
+                        ):
+                            freeze_event = PassEvent(
+                                frame_idx=frame_idx,
+                                carrier=freeze_carrier,
+                                options=options,
+                                top_score=options[0].score,
                             )
-                            if options:
-                                freeze_event = PassEvent(
-                                    frame_idx=frame_idx,
-                                    carrier=freeze_carrier,
-                                    options=options,
-                                    top_score=options[0].score,
-                                )
-                                for revealed, phase_hold in _prediction_freeze_phases(
-                                    fps, min(3, len(options))
-                                ):
-                                    for step in range(phase_hold):
-                                        progress = (step + 1) / max(phase_hold, 1)
-                                        overlay = draw_pass_alternatives_overlay(
-                                            frame,
-                                            dets,
-                                            freeze_event,
-                                            revealed_options=revealed,
-                                            reveal_progress=progress,
-                                            transformer=lane_h,
-                                            locked_goal_defenders=locked_goals,
-                                            metric=True,
-                                            hud_title=(
-                                                "PASS NETWORK  -  detected pass"
-                                                " + open lanes"
-                                            ),
-                                        )
-                                        sink.write_frame(overlay)
+                            for revealed, phase_hold in _prediction_freeze_phases(
+                                fps, min(3, len(options))
+                            ):
+                                for step in range(phase_hold):
+                                    progress = (step + 1) / max(phase_hold, 1)
+                                    overlay = draw_pass_alternatives_overlay(
+                                        frame,
+                                        dets,
+                                        freeze_event,
+                                        revealed_options=revealed,
+                                        reveal_progress=progress,
+                                        transformer=lane_h,
+                                        locked_goal_defenders=locked_goals,
+                                        metric=True,
+                                        hud_title=(
+                                            "PASS NETWORK  -  detected pass"
+                                            " + open lanes"
+                                        ),
+                                    )
+                                    sink.write_frame(overlay)
 
                 image = draw_radar_minimap(
                     image,

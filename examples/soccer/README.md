@@ -178,8 +178,9 @@ on the field.
   ```
 
 - `PASS_ALTERNATIVES` — Freeze moments with ranked open teammate pass lanes
-  (lane scoring via `pass_options` / `PassQualityScorer`). Opt-in only (not
-  part of `ALL`). Requires ball weights like `PASS_NETWORK`; prefer a full clip.
+  (lane scoring via `pass_options` / `PassQualityScorer`; detected passes are
+  not scored). Opt-in only (not part of `ALL`). Requires ball weights like
+  `PASS_NETWORK`; prefer a full clip.
 
   ```bash
   python main.py --source_video_path data/08fd33_0.mp4 \

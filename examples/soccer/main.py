@@ -465,7 +465,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--freeze-quality-threshold', dest='freeze_quality_threshold',
         type=float, default=0.0,
-        help='(PASS_NETWORK) Min detected-pass quality to trigger a prediction freeze',
+        help='(PASS_NETWORK) Min top alternative-lane score to trigger a prediction freeze',
     )
 
     args = parser.parse_args()
