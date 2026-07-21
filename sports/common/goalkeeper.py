@@ -40,9 +40,9 @@ def infer_goal_defenders(
     """Return ``(left_goal_team, right_goal_team)`` using defensive blocks.
 
     For each team, take the mean pitch-X of the ``n_defenders`` most defensive
-    players at each end (lowest X on the left, highest X on the right). Assign
-    each goal to the team with the stronger defensive-block margin there
-    (handshake: prefer the side with the larger margin so both goals stay opposite).
+    players at each end (lowest X on the left, highest X on the right). Choose
+    orientation from the sign of the stronger absolute margin so both goals stay
+    opposite teams.
     """
     x_by_team: dict[int, np.ndarray] = {}
     for tid in (0, 1):
@@ -59,9 +59,17 @@ def infer_goal_defenders(
     l0, r0 = _block_avg(x_by_team[0], "left"), _block_avg(x_by_team[0], "right")
     l1, r1 = _block_avg(x_by_team[1], "left"), _block_avg(x_by_team[1], "right")
 
+    # Positive left_margin  => team 0 is further left than team 1.
+    # Positive right_margin => team 1 is further right than team 0.
+    # Pick the stronger |margin|, then use its *sign* for orientation.
+    # Comparing signed margins alone (old handshake) flipped sides when both
+    # agreed on (0, 1) but the right margin was numerically larger.
     left_margin = l1 - l0
     right_margin = r1 - r0
-    return (0, 1) if left_margin >= right_margin else (1, 0)
+    margin = (
+        left_margin if abs(left_margin) >= abs(right_margin) else right_margin
+    )
+    return (0, 1) if margin >= 0 else (1, 0)
 
 
 def resolve_goalkeepers_team_by_goal(

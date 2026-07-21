@@ -57,6 +57,58 @@ def test_infer_goal_defenders_handshake_prefers_stronger_margin():
     assert infer_goal_defenders(pitch, teams, n_defenders=3) == (1, 0)
 
 
+def test_infer_goal_defenders_uses_sign_of_stronger_margin():
+    """Both margins agree on (0, 1); larger right margin must not flip sides.
+
+    Regression for c01561_3-style layouts where |right_margin| > |left_margin|
+    but both are positive (team 0 left / team 1 right).
+    """
+    mid_y = PITCH_WIDTH_CM / 2.0
+    pitch = np.array(
+        [
+            [200.0, mid_y],
+            [210.0, mid_y],
+            [220.0, mid_y],
+            [700.0, mid_y],
+            [710.0, mid_y],
+            [720.0, mid_y],
+            [9000.0, mid_y],
+            [9010.0, mid_y],
+            [9020.0, mid_y],
+            [11500.0, mid_y],
+            [11510.0, mid_y],
+            [11520.0, mid_y],
+        ],
+        dtype=np.float32,
+    )
+    teams = np.array([0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1], dtype=int)
+    assert infer_goal_defenders(pitch, teams, n_defenders=3) == (0, 1)
+
+
+def test_infer_goal_defenders_mirrored_negative_margins():
+    """Both margins agree on (1, 0); larger |left| must keep that orientation."""
+    mid_y = PITCH_WIDTH_CM / 2.0
+    pitch = np.array(
+        [
+            [700.0, mid_y],
+            [710.0, mid_y],
+            [720.0, mid_y],
+            [200.0, mid_y],
+            [210.0, mid_y],
+            [220.0, mid_y],
+            [11500.0, mid_y],
+            [11510.0, mid_y],
+            [11520.0, mid_y],
+            [9000.0, mid_y],
+            [9010.0, mid_y],
+            [9020.0, mid_y],
+        ],
+        dtype=np.float32,
+    )
+    teams = np.array([0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1], dtype=int)
+    assert infer_goal_defenders(pitch, teams, n_defenders=3) == (1, 0)
+
+
 def test_resolve_goalkeeper_uses_nearer_goal_defender():
     mid_y = PITCH_WIDTH_CM / 2.0
     outfield = np.array(
