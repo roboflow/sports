@@ -6,12 +6,7 @@ import numpy as np
 import supervision as sv
 
 from sports.common.kinematics import feet_xy, player_mask
-from sports.common.team import (
-    TeamLocks,
-    _fill_goalkeeper_teams_by_centroid,
-    clone_team_frames,
-    lock_teams_by_tracklet_majority,
-)
+from sports.common.team import TeamLocks, clone_team_frames
 from sports.common.tracking import resolve_goalkeepers_team_id
 from sports.configs.soccer import (
     GOALKEEPER_CLASS_ID,
@@ -371,28 +366,3 @@ def derive_gk_locks(
         )
         return gk_lock, locked_goal_defenders
     return {}, None
-
-
-def derive_clip_locks(
-    frames: list[tuple[int, sv.Detections]],
-    *,
-    minimap_transforms: dict[int, object] | None = None,
-) -> TeamLocks:
-    """Derive team / goalkeeper / goal-defender locks from a tracking pass."""
-    outfield = clone_team_frames(frames)
-    team_lock = lock_teams_by_tracklet_majority(outfield)
-
-    gk_lock: dict[int, int] = {}
-    locked_goal_defenders: tuple[int, int] | None = None
-    if minimap_transforms:
-        gk_lock, locked_goal_defenders = derive_gk_locks(
-            frames, minimap_transforms=minimap_transforms,
-        )
-    else:
-        _fill_goalkeeper_teams_by_centroid(outfield)
-
-    return TeamLocks(
-        team_lock=team_lock,
-        gk_lock=gk_lock,
-        locked_goal_defenders=locked_goal_defenders,
-    )
