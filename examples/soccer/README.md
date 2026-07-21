@@ -147,6 +147,36 @@ on the field.
 
   Requires pitch keypoints (same flags as SPEED).
 
+- `SPEED_AND_DISTANCE` — Speed + distance chips and per-player trace lines on the
+  radar minimap (no end-card). Default shows all players; pass `--track-id N` to
+  spotlight one player (dimmed background, single trace on minimap).
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/renders/2e57b9_0-speed-distance.mp4 \
+  --device mps --mode SPEED_AND_DISTANCE --max-frames 90
+
+  # spotlight one player
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/renders/2e57b9_0-speed-distance-spotlight.mp4 \
+  --device mps --mode SPEED_AND_DISTANCE --track-id 42 --max-frames 90
+  ```
+
+- `ALL` — Runs DIRECTION, SPEED, DISTANCE, SPEED_AND_DISTANCE (all players), and
+  SPEED_AND_DISTANCE (spotlight) in one pass. Builds a shared
+  `VideoTrackingSession` once; each mode writes a separate `-{suffix}.mp4` next to
+  the base `--target_video_path`. Spotlight track is the player with max cumulative
+  distance unless `--track-id` is set.
+
+  ```bash
+  python main.py --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/renders/2e57b9_0.mp4 \
+  --device mps --mode ALL --max-frames 90
+  ```
+
+  Analytics flags: `--max-frames`, `--tracker`, `--track-id`, `--cache`, detector/model
+  paths (same as SPEED/DISTANCE).
+
 ## 🗺️ roadmap
 
 - [ ] Add smoothing to eliminate flickering in RADAR mode.
