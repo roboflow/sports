@@ -107,6 +107,42 @@ def draw_pitch(
     return pitch_image
 
 
+def draw_goals_on_pitch(
+    config: SoccerPitchConfiguration,
+    *,
+    left_defender_team: int,
+    right_defender_team: int,
+    pitch: np.ndarray,
+    padding: int = 50,
+    scale: float = 0.1,
+    fill_alpha: float = 0.38,
+) -> np.ndarray:
+    """Highlight each goal mouth in the defending team's color."""
+    team_colors = [sv.Color.from_hex(c) for c in PLAYER_VIS_COLORS[:2]]
+    w = config.width
+    length = config.length
+    gbw = config.goal_box_width
+    gbl = config.goal_box_length
+    y0, y1 = (w - gbw) / 2, (w + gbw) / 2
+
+    def _goal_patch(goal_x_cm: float, defender: int, depth_cm: float) -> None:
+        color = team_colors[defender % len(team_colors)].as_bgr()
+        mouth_x = int(goal_x_cm * scale) + padding
+        py0 = int(y0 * scale) + padding
+        py1 = int(y1 * scale) + padding
+        inner_x = int((goal_x_cm + depth_cm) * scale) + padding
+        x_lo, x_hi = sorted((mouth_x, inner_x))
+        overlay = pitch.copy()
+        cv2.rectangle(overlay, (x_lo, py0), (x_hi, py1), color, -1)
+        cv2.addWeighted(overlay, fill_alpha, pitch, 1.0 - fill_alpha, 0, pitch)
+        cv2.line(pitch, (mouth_x, py0), (mouth_x, py1), color, 5, cv2.LINE_AA)
+        cv2.line(pitch, (mouth_x, py0), (mouth_x, py1), (255, 255, 255), 1, cv2.LINE_AA)
+
+    _goal_patch(0.0, left_defender_team, gbl)
+    _goal_patch(float(length), right_defender_team, -gbl)
+    return pitch
+
+
 def draw_points_on_pitch(
     config: SoccerPitchConfiguration,
     xy: np.ndarray,

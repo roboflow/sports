@@ -148,6 +148,7 @@ def _render_speed_distance_traces(
                     draw_distance_labels(annotated, marked, dist_by_tid)
                     mini_radar = build_trace_minimap(
                         dets, radar_transformer, trace_by_tid, focus_tid,
+                        locked_goal_defenders=locks.locked_goal_defenders,
                     )
                     overlay_minimap(annotated, mini_radar)
                 else:
@@ -160,6 +161,7 @@ def _render_speed_distance_traces(
                         draw_speed_legend(annotated)
                     mini_radar = build_trace_minimap(
                         dets, radar_transformer, trace_by_tid, None,
+                        locked_goal_defenders=locks.locked_goal_defenders,
                     )
                     overlay_minimap(annotated, mini_radar)
                 sink.write_frame(annotated)
