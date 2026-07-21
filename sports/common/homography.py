@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -9,6 +9,10 @@ from sports.common.view import ViewTransformer
 from sports.configs.soccer import SoccerPitchConfiguration
 
 HOMOGRAPHY_RANSAC_REPROJ_THRESH = 10.0
+# Post-fit mean reprojection gate for m/s homography (slightly above RANSAC thresh).
+SPEED_GATE_MAX_REPROJ_PX = 11.0
+# Reject a gated fit when pitch-space mapping jumps more than this between frames.
+SPEED_GATE_MAX_JUMP_CM = 600.0
 DISPLAY_MIN_KEYPOINTS = 4
 PITCH_CONFIG = SoccerPitchConfiguration()
 
@@ -159,32 +163,24 @@ def keypoints_from_inference_field(
     return sv.KeyPoints(xy=xy, confidence=conf)
 
 
-def valid_pitch_cm(
-    xy: np.ndarray,
+def _pitch_correspondences(
+    keypoints: Optional[sv.KeyPoints],
+    *,
     config: SoccerPitchConfiguration = PITCH_CONFIG,
-    margin_cm: float = 200.0,
-) -> np.ndarray:
-    """
-    Return a mask for warped points inside the pitch rectangle.
-
-    Args:
-        xy (np.ndarray): Pitch-space points in centimeters.
-        config (SoccerPitchConfiguration): Pitch configuration.
-        margin_cm (float): Inset margin from pitch edges.
-
-    Returns:
-        np.ndarray: Boolean mask aligned with xy rows.
-    """
-    if xy is None or len(xy) == 0:
-        return np.zeros(0, dtype=bool)
-    finite = np.isfinite(xy).all(axis=1)
-    return (
-        finite
-        & (xy[:, 0] >= margin_cm)
-        & (xy[:, 0] <= config.length - margin_cm)
-        & (xy[:, 1] >= margin_cm)
-        & (xy[:, 1] <= config.width - margin_cm)
-    )
+    confidence: float = 0.9,
+    min_keypoints: int = DISPLAY_MIN_KEYPOINTS,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Return accepted image and pitch point pairs for one frame."""
+    if keypoints is None or keypoints.xy.shape[0] == 0:
+        return None
+    n = pitch_vertex_count(config)
+    xy, conf = align_pitch_keypoints(keypoints, n_vertices=n)
+    mask = pitch_keypoint_accept_mask(xy, conf, confidence=confidence)
+    if mask.sum() < min_keypoints:
+        return None
+    src = xy[mask].astype(np.float32)
+    dst = np.array(config.vertices, dtype=np.float32)[mask]
+    return src, dst
 
 
 def fit_pitch_homography(
@@ -209,15 +205,15 @@ def fit_pitch_homography(
     Returns:
         Optional[ViewTransformer]: Fitted homography, or None when fitting fails.
     """
-    if keypoints is None or keypoints.xy.shape[0] == 0:
+    pts = _pitch_correspondences(
+        keypoints,
+        config=config,
+        confidence=confidence,
+        min_keypoints=min_keypoints,
+    )
+    if pts is None:
         return None
-    n = pitch_vertex_count(config)
-    xy, conf = align_pitch_keypoints(keypoints, n_vertices=n)
-    mask = pitch_keypoint_accept_mask(xy, conf, confidence=confidence)
-    if mask.sum() < min_keypoints:
-        return None
-    src = xy[mask].astype(np.float32)
-    dst = np.array(config.vertices, dtype=np.float32)[mask]
+    src, dst = pts
     try:
         return RansacViewTransformer(
             source=src,
@@ -227,3 +223,122 @@ def fit_pitch_homography(
         )
     except ValueError:
         return None
+
+
+def _mean_reproj_px(
+    transformer: ViewTransformer, src: np.ndarray, dst: np.ndarray
+) -> float:
+    """Average reprojection error in image pixels."""
+    try:
+        m_inv = np.linalg.inv(transformer.m)
+    except np.linalg.LinAlgError:
+        return float("inf")
+    reproj = cv2.perspectiveTransform(
+        dst.reshape(-1, 1, 2).astype(np.float32), m_inv
+    ).reshape(-1, 2)
+    return float(np.linalg.norm(reproj - src, axis=1).mean())
+
+
+def _homography_jump_cm(
+    prev: ViewTransformer, candidate: ViewTransformer, src: np.ndarray
+) -> float:
+    """Largest pitch-space displacement (cm) between two homographies."""
+    if src is None or len(src) == 0:
+        return 0.0
+    pts = np.asarray(src, dtype=np.float32)
+    prev_cm = prev.transform_points(pts)
+    cand_cm = candidate.transform_points(pts)
+    deltas = np.linalg.norm(cand_cm - prev_cm, axis=1)
+    finite = deltas[np.isfinite(deltas)]
+    if finite.size == 0:
+        return float("inf")
+    return float(finite.max())
+
+
+def replay_gated_transforms(
+    keypoints_by_frame: dict[int, sv.KeyPoints | None],
+    *,
+    confidence: float = 0.9,
+    max_reproj_px: float = SPEED_GATE_MAX_REPROJ_PX,
+    max_jump_cm: float = SPEED_GATE_MAX_JUMP_CM,
+    ransac_thresh: float = HOMOGRAPHY_RANSAC_REPROJ_THRESH,
+    config: SoccerPitchConfiguration = PITCH_CONFIG,
+) -> dict[int, ViewTransformer | None]:
+    """Re-derive gated speed homographies from cached keypoints."""
+    locked: ViewTransformer | None = None
+    last_was_accept = False
+    transforms: dict[int, ViewTransformer | None] = {}
+    for frame_idx in sorted(int(fi) for fi in keypoints_by_frame):
+        kps = keypoints_by_frame.get(frame_idx)
+        pts = _pitch_correspondences(kps, config=config, confidence=confidence)
+        if pts is None:
+            last_was_accept = False
+            transforms[frame_idx] = None
+            continue
+        src, dst = pts
+        try:
+            candidate = RansacViewTransformer(
+                source=src,
+                target=dst,
+                use_ransac=True,
+                ransac_thresh=ransac_thresh,
+            )
+        except ValueError:
+            last_was_accept = False
+            transforms[frame_idx] = None
+            continue
+
+        err = _mean_reproj_px(candidate, src, dst)
+        if err <= max_reproj_px:
+            if (
+                locked is not None
+                and last_was_accept
+                and _homography_jump_cm(locked, candidate, src) > max_jump_cm
+            ):
+                last_was_accept = False
+                transforms[frame_idx] = None
+                continue
+            locked = candidate
+            last_was_accept = True
+            transforms[frame_idx] = candidate
+            continue
+
+        last_was_accept = False
+        if locked is None:
+            try:
+                locked = RansacViewTransformer(
+                    source=src, target=dst, use_ransac=False
+                )
+            except ValueError:
+                pass
+        transforms[frame_idx] = None
+    return transforms
+
+
+def build_minimap_transform_map(
+    keypoints_by_frame: dict[int, sv.KeyPoints | None],
+    *,
+    confidence: float = 0.9,
+    config: SoccerPitchConfiguration = PITCH_CONFIG,
+) -> dict[int, ViewTransformer | None]:
+    """Per-frame ungated homography for the visible minimap."""
+    out: dict[int, ViewTransformer | None] = {}
+    for fi, kps in keypoints_by_frame.items():
+        out[int(fi)] = fit_pitch_homography(
+            kps, config=config, confidence=confidence, use_ransac=False
+        )
+    return out
+
+
+def gap_fill_speed_transforms(
+    gated_by_frame: dict[int, ViewTransformer | None],
+    ungated_by_frame: dict[int, ViewTransformer | None],
+) -> dict[int, ViewTransformer]:
+    """Speed H per frame: gated where available, else ungated minimap fit."""
+    filled: dict[int, ViewTransformer] = {}
+    for fi in gated_by_frame:
+        gated = gated_by_frame[fi]
+        t = gated if gated is not None else ungated_by_frame.get(int(fi))
+        if t is not None:
+            filled[int(fi)] = t
+    return filled

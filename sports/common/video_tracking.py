@@ -1,18 +1,33 @@
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import supervision as sv
 
-from sports.common.cache import FrameCache, build_or_load_detections
+from sports.common.cache import (
+    FrameCache,
+    build_or_load_detections,
+    build_or_load_keypoints,
+)
+from sports.common.detection import (
+    DEFAULT_PITCH_MODEL_ID,
+    create_pitch_keypoint_detector,
+)
+from sports.common.homography import (
+    build_minimap_transform_map,
+    gap_fill_speed_transforms,
+    replay_gated_transforms,
+)
+from sports.common.goalkeeper import apply_goalkeeper_teams, derive_gk_locks
 from sports.common.team import (
     TeamLocks,
     apply_team_lock,
     clone_team_frames,
-    derive_tracklet_team_lock,
+    lock_teams_by_tracklet_majority,
     relock_detection_teams,
 )
 from sports.common.tracking import (
+    DEFAULT_PLAYER_MODEL_ID,
     collect_referee_tracker_ids,
     collect_team_frames,
     create_player_detector,
@@ -20,11 +35,8 @@ from sports.common.tracking import (
     drop_blocked_tracker_ids,
     fit_team_classifier,
     open_video,
-    resolve_goalkeepers_team_id,
 )
-from sports.configs.soccer import GOALKEEPER_CLASS_ID, PLAYER_CLASS_ID, TEAM_NONE
-
-DEFAULT_PLAYER_MODEL_ID = "football-players-detection-3zvbc/11"
+from sports.configs.soccer import TEAM_NONE
 
 
 @dataclass
@@ -46,16 +58,59 @@ class VideoTrackingSession:
     referee_frames: list
     blocked_ids: frozenset
 
+    kp_by_frame: dict | None = None
+
     _team_lock: TeamLocks | None = field(default=None, repr=False)
+    _speed_transforms: dict | None = field(default=None, repr=False)
+    _gap_filled_transforms: dict | None = field(default=None, repr=False)
+    _minimap_transforms: dict | None = field(default=None, repr=False)
 
     def team_locks(self) -> TeamLocks:
         """Return clip-level team locks, cached."""
         if self._team_lock is None:
-            cloned = clone_team_frames(self.frames)
+            outfield = clone_team_frames(self.frames)
+            team_lock = lock_teams_by_tracklet_majority(outfield)
+            gk_lock: dict[int, int] = {}
+            locked_goal_defenders: tuple[int, int] | None = None
+            if self.kp_by_frame is not None:
+                gk_lock, locked_goal_defenders = derive_gk_locks(
+                    self.frames,
+                    minimap_transforms=self.minimap_transforms_by_frame,
+                )
             self._team_lock = TeamLocks(
-                team_lock=derive_tracklet_team_lock(cloned),
+                team_lock=team_lock,
+                gk_lock=gk_lock,
+                locked_goal_defenders=locked_goal_defenders,
             )
         return self._team_lock
+
+    def _gated_speed_transforms(self) -> dict:
+        if self._speed_transforms is None:
+            if not self.kp_by_frame:
+                raise RuntimeError("pitch keypoints were not computed for this session")
+            self._speed_transforms = replay_gated_transforms(self.kp_by_frame)
+        return self._speed_transforms
+
+    @property
+    def gap_filled_transforms_by_frame(self) -> dict:
+        """Speed homography with ungated fallback for display badges."""
+        if self._gap_filled_transforms is None:
+            if not self.kp_by_frame:
+                raise RuntimeError("pitch keypoints were not computed for this session")
+            self._gap_filled_transforms = gap_fill_speed_transforms(
+                self._gated_speed_transforms(),
+                self.minimap_transforms_by_frame,
+            )
+        return self._gap_filled_transforms
+
+    @property
+    def minimap_transforms_by_frame(self) -> dict:
+        """Ungated homography per frame for the visible minimap."""
+        if self._minimap_transforms is None:
+            if not self.kp_by_frame:
+                raise RuntimeError("pitch keypoints were not computed for this session")
+            self._minimap_transforms = build_minimap_transform_map(self.kp_by_frame)
+        return self._minimap_transforms
 
     def iter_tracked(self):
         """Yield frame_idx and tracked detections with blocked ids removed."""
@@ -72,22 +127,15 @@ class VideoTrackingSession:
         *,
         locks: TeamLocks,
         vel_smoother,
+        frame_idx: int,
     ) -> sv.Detections:
-        """Apply team lock and centroid goalkeeper assignment to a replay frame."""
+        """Apply team lock and goalkeeper assignment to a replay frame."""
         team_arr = (
             np.array(tracked.data.get("team"), dtype=int)
             if tracked.data and tracked.data.get("team") is not None
             else np.full(len(tracked), TEAM_NONE, dtype=int)
         )
         team_arr = apply_team_lock(team_arr, tracked.tracker_id, locks.team_lock)
-        if len(tracked):
-            gk_mask = tracked.class_id == GOALKEEPER_CLASS_ID
-            pl_mask = tracked.class_id == PLAYER_CLASS_ID
-            if gk_mask.any() and (team_arr == 0).any() and (team_arr == 1).any():
-                gk_teams = resolve_goalkeepers_team_id(
-                    tracked[pl_mask], team_arr[pl_mask], tracked[gk_mask]
-                )
-                team_arr[gk_mask] = gk_teams
         data = dict(tracked.data) if tracked.data else {}
         data["team"] = team_arr
         decorated = sv.Detections(
@@ -97,8 +145,18 @@ class VideoTrackingSession:
             confidence=tracked.confidence,
             data=data,
         )
+        radar_h = (
+            self.minimap_transforms_by_frame.get(frame_idx)
+            if self.kp_by_frame is not None
+            else None
+        )
+        decorated = apply_goalkeeper_teams(
+            decorated, transformer=radar_h, locks=locks,
+        )
         decorated = vel_smoother.smooth_detections(decorated)
-        decorated = relock_detection_teams(decorated, locks.team_lock)
+        decorated = relock_detection_teams(
+            decorated, locks.team_lock, gk_lock=locks.gk_lock or None,
+        )
         return decorated
 
 
@@ -117,7 +175,24 @@ def _create_player_detector_factory(args) -> Callable:
     return _factory
 
 
-def build_video_tracking_session(args) -> VideoTrackingSession:
+def _create_pitch_detector_factory(args) -> Callable:
+    pitch_model_id = getattr(args, "pitch_model_id", DEFAULT_PITCH_MODEL_ID)
+
+    def _factory():
+        return create_pitch_keypoint_detector(
+            backend=args.pitch_detector,
+            model_path=getattr(args, "pitch_model_path", None),
+            model_id=pitch_model_id,
+            device=args.device,
+            api_key=getattr(args, "api_key", None),
+        )
+
+    return _factory
+
+
+def build_video_tracking_session(
+    args, *, need_homography: bool = False
+) -> VideoTrackingSession:
     """Run shared analytics groundwork once and return a VideoTrackingSession."""
     _, fps, width, height = open_video(args.source_video_path)
     max_frames = getattr(args, "max_frames", None)
@@ -125,12 +200,15 @@ def build_video_tracking_session(args) -> VideoTrackingSession:
     needs_frame = tracker_kind == "botsort"
 
     player_model_id = getattr(args, "player_model_id", DEFAULT_PLAYER_MODEL_ID)
+    pitch_model_id = getattr(args, "pitch_model_id", DEFAULT_PITCH_MODEL_ID)
     cache = FrameCache(
         args.source_video_path,
         cache_dir=getattr(args, "cache_dir", None),
         enabled=getattr(args, "cache", True),
         player_backend=args.player_detector,
         player_model_id=player_model_id,
+        pitch_backend=getattr(args, "pitch_detector", "yolo"),
+        pitch_model_id=pitch_model_id,
     )
     det_by_frame = build_or_load_detections(
         args.source_video_path,
@@ -138,6 +216,15 @@ def build_video_tracking_session(args) -> VideoTrackingSession:
         cache,
         max_frames=max_frames,
     )
+
+    kp_by_frame = None
+    if need_homography:
+        kp_by_frame = build_or_load_keypoints(
+            args.source_video_path,
+            _create_pitch_detector_factory(args),
+            cache,
+            max_frames=max_frames,
+        )
 
     print("Fitting team classifier...")
     cap, _, _, _ = open_video(args.source_video_path)
@@ -176,4 +263,5 @@ def build_video_tracking_session(args) -> VideoTrackingSession:
         frames=frames,
         referee_frames=referee_frames,
         blocked_ids=blocked_ids,
+        kp_by_frame=kp_by_frame,
     )

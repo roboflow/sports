@@ -1,5 +1,5 @@
 from typing import Generator, Iterable, List, TypeVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import supervision as sv
@@ -22,9 +22,11 @@ SIGLIP_MODEL_PATH = 'google/siglip-base-patch16-224'
 
 @dataclass
 class TeamLocks:
-    """Clip-level team lock for direction mode."""
+    """Clip-level team and goalkeeper locks."""
 
     team_lock: dict
+    gk_lock: dict = field(default_factory=dict)
+    locked_goal_defenders: tuple[int, int] | None = None
 
 
 def create_batches(
@@ -131,6 +133,9 @@ def lock_teams_by_tracklet_majority(
 ) -> dict[int, int]:
     """Lock one team per tracker id using a majority shirt-colour vote.
 
+    Only outfield (player-class) rows contribute votes so goalkeeper rows and
+    position-based GK fills cannot flip outfield tracklet colours.
+
     Args:
         frames: Sequence of ``(frame_idx, detections)`` pairs from a clip.
 
@@ -146,7 +151,7 @@ def lock_teams_by_tracklet_majority(
         )
         for i, tid in enumerate(dets.tracker_id):
             tid = int(tid)
-            if tid < 0:
+            if tid < 0 or int(dets.class_id[i]) != PLAYER_CLASS_ID:
                 continue
             raw = int(team[i])
             if raw in (0, 1):
@@ -184,18 +189,27 @@ def apply_team_lock(
 
 
 def relock_detection_teams(
-    dets: sv.Detections, team_lock: dict[int, int]
+    dets: sv.Detections,
+    team_lock: dict[int, int],
+    *,
+    gk_lock: dict[int, int] | None = None,
 ) -> sv.Detections:
     """Return detections with ``data['team']`` re-locked to the clip-level mapping.
+
+    Outfield rows use ``team_lock``; goalkeeper rows prefer ``gk_lock`` when set
+    so per-frame goal-distance assignment is not overwritten by shirt-colour votes.
 
     Args:
         dets: Input detections.
         team_lock: Clip-level ``{tracker_id: team}`` mapping.
+        gk_lock: Optional clip-level goalkeeper ``{tracker_id: team}`` mapping.
 
     Returns:
         New detections with updated team data, or ``dets`` unchanged when empty.
     """
-    if not team_lock or dets.tracker_id is None or len(dets) == 0:
+    if dets.tracker_id is None or len(dets) == 0:
+        return dets
+    if not team_lock and not gk_lock:
         return dets
     team = np.asarray(
         dets.data.get("team", np.full(len(dets), TEAM_NONE))
@@ -203,7 +217,13 @@ def relock_detection_teams(
         else np.full(len(dets), TEAM_NONE),
         dtype=int,
     )
-    team = apply_team_lock(team, dets.tracker_id, team_lock)
+    if team_lock:
+        team = apply_team_lock(team, dets.tracker_id, team_lock)
+    if gk_lock and dets.tracker_id is not None:
+        for i, tid in enumerate(dets.tracker_id):
+            tid = int(tid)
+            if int(dets.class_id[i]) == GOALKEEPER_CLASS_ID and tid in gk_lock:
+                team[i] = gk_lock[tid]
     data = dict(dets.data) if dets.data else {}
     data["team"] = team
     return sv.Detections(
@@ -237,37 +257,4 @@ def clone_team_frames(
             )
         )
     return cloned
-
-
-def _fill_goalkeeper_teams_by_centroid(
-    frames: list[tuple[int, sv.Detections]],
-) -> None:
-    """Fill goalkeeper team ids per frame using the centroid rule."""
-    from sports.common.tracking import resolve_goalkeepers_team_id
-
-    for _, dets in frames:
-        if dets.data is None or len(dets) == 0 or dets.tracker_id is None:
-            continue
-        team = np.asarray(
-            dets.data.get("team", np.full(len(dets), TEAM_NONE)), dtype=int
-        )
-        gk_mask = dets.class_id == GOALKEEPER_CLASS_ID
-        pl_mask = dets.class_id == PLAYER_CLASS_ID
-        if not gk_mask.any():
-            continue
-        if not ((team[pl_mask] == 0).any() and (team[pl_mask] == 1).any()):
-            continue
-        gk_teams = resolve_goalkeepers_team_id(
-            dets[pl_mask], team[pl_mask], dets[gk_mask]
-        )
-        team[gk_mask] = gk_teams
-        dets.data["team"] = team
-
-
-def derive_tracklet_team_lock(
-    frames: list[tuple[int, sv.Detections]],
-) -> dict[int, int]:
-    """Derive clip-level team lock with centroid goalkeeper fill."""
-    _fill_goalkeeper_teams_by_centroid(frames)
-    return lock_teams_by_tracklet_majority(frames)
 

@@ -25,6 +25,7 @@ from sports.configs.soccer import (
 )
 
 from direction import run_direction
+from speed import run_speed
 
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
@@ -84,14 +85,17 @@ class Mode(Enum):
     TEAM_CLASSIFICATION = 'TEAM_CLASSIFICATION'
     RADAR = 'RADAR'
     DIRECTION = 'DIRECTION'
+    SPEED = 'SPEED'
 
 
-ANALYTICS_MODES = (Mode.DIRECTION,)
+ANALYTICS_MODES = (Mode.DIRECTION, Mode.SPEED)
 
 
 def run_analytics_mode(mode: Mode, args: argparse.Namespace) -> None:
     if mode == Mode.DIRECTION:
         run_direction(args)
+    elif mode == Mode.SPEED:
+        run_speed(args)
     else:
         raise NotImplementedError(f"Mode {mode} is not an analytics mode.")
 
@@ -401,11 +405,19 @@ if __name__ == '__main__':
     parser.add_argument('--player-detector', dest='player_detector', default='yolo',
                         choices=('yolo', 'inference'),
                         help='(analytics) Player detection backend')
+    parser.add_argument('--pitch-detector', dest='pitch_detector', default='yolo',
+                        choices=('yolo', 'inference'),
+                        help='(analytics) Pitch keypoint detection backend (SPEED mode)')
     parser.add_argument('--player-model-path', dest='player_model_path', default=None,
                         help='(analytics) Path to YOLO player detection .pt')
+    parser.add_argument('--pitch-model-path', dest='pitch_model_path', default=None,
+                        help='(analytics) Path to YOLO pitch keypoint .pt (SPEED mode)')
     parser.add_argument('--player-model-id', dest='player_model_id',
                         default='football-players-detection-3zvbc/11',
                         help='(analytics) Roboflow Inference model id for player detection')
+    parser.add_argument('--pitch-model-id', dest='pitch_model_id',
+                        default='football-field-detection-f07vi/15',
+                        help='(analytics) Roboflow Inference model id for pitch keypoints (SPEED mode)')
     parser.add_argument('--api-key', dest='api_key', default=None,
                         help='(analytics) Roboflow API key (also read from ROBOFLOW_API_KEY)')
     parser.add_argument('--cache', dest='cache', action=argparse.BooleanOptionalAction,

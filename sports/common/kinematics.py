@@ -2,7 +2,24 @@ import numpy as np
 import supervision as sv
 from trackers.utils.state_representations import XCYCWHStateEstimator, XYXYStateEstimator
 
+from sports.configs.soccer import GOALKEEPER_CLASS_ID, PLAYER_CLASS_ID
+
 DEFAULT_MIN_SPEED_PX = 0.5
+
+
+def feet_xy(detections: sv.Detections) -> np.ndarray:
+    """Bottom-center anchor for each detection row."""
+    if len(detections) == 0:
+        return np.zeros((0, 2), dtype=np.float32)
+    return detections.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
+
+
+def player_mask(detections: sv.Detections) -> np.ndarray:
+    """True for outfield players and goalkeepers."""
+    if len(detections) == 0 or detections.class_id is None:
+        return np.zeros(0, dtype=bool)
+    cls = detections.class_id.astype(int)
+    return (cls == PLAYER_CLASS_ID) | (cls == GOALKEEPER_CLASS_ID)
 
 
 def _kalman_feet_velocity_from_tracklet(tracklet):
