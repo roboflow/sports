@@ -37,7 +37,13 @@ def image_to_pitch_cm(points_xy: np.ndarray, transformer) -> np.ndarray | None:
 def infer_goal_defenders(
     pitch_xy_cm: np.ndarray, teams: np.ndarray, n_defenders: int = 3
 ) -> tuple[int, int]:
-    """Return (left_goal_team, right_goal_team) using defensive blocks."""
+    """Return ``(left_goal_team, right_goal_team)`` using defensive blocks.
+
+    For each team, take the mean pitch-X of the ``n_defenders`` most defensive
+    players at each end (lowest X on the left, highest X on the right). Assign
+    each goal to the team with the stronger defensive-block margin there
+    (handshake: prefer the side with the larger margin so both goals stay opposite).
+    """
     x_by_team: dict[int, np.ndarray] = {}
     for tid in (0, 1):
         mask = teams == tid
