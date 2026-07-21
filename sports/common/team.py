@@ -258,36 +258,3 @@ def clone_team_frames(
         )
     return cloned
 
-
-def _fill_goalkeeper_teams_by_centroid(
-    frames: list[tuple[int, sv.Detections]],
-) -> None:
-    """Fill goalkeeper team ids per frame using the centroid rule."""
-    from sports.common.tracking import resolve_goalkeepers_team_id
-
-    for _, dets in frames:
-        if dets.data is None or len(dets) == 0 or dets.tracker_id is None:
-            continue
-        team = np.asarray(
-            dets.data.get("team", np.full(len(dets), TEAM_NONE)), dtype=int
-        )
-        gk_mask = dets.class_id == GOALKEEPER_CLASS_ID
-        pl_mask = dets.class_id == PLAYER_CLASS_ID
-        if not gk_mask.any():
-            continue
-        if not ((team[pl_mask] == 0).any() and (team[pl_mask] == 1).any()):
-            continue
-        gk_teams = resolve_goalkeepers_team_id(
-            dets[pl_mask], team[pl_mask], dets[gk_mask]
-        )
-        team[gk_mask] = gk_teams
-        dets.data["team"] = team
-
-
-def derive_tracklet_team_lock(
-    frames: list[tuple[int, sv.Detections]],
-) -> dict[int, int]:
-    """Derive clip-level team lock with centroid goalkeeper fill."""
-    _fill_goalkeeper_teams_by_centroid(frames)
-    return lock_teams_by_tracklet_majority(frames)
-
