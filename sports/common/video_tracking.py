@@ -6,9 +6,11 @@ import supervision as sv
 
 from sports.common.cache import (
     FrameCache,
+    build_or_load_ball_detections,
     build_or_load_detections,
     build_or_load_keypoints,
 )
+from sports.common.ball import attach_ball, create_ball_detector
 from sports.common.detection import (
     DEFAULT_PITCH_MODEL_ID,
     create_pitch_keypoint_detector,
@@ -19,9 +21,15 @@ from sports.common.homography import (
     replay_gated_transforms,
 )
 from sports.common.kinematics import (
+    KalmanVelocitySmoother,
     PlayerTrack,
     collect_tracks,
     compute_kinematics,
+)
+from sports.common.passes import (
+    PassDetectionConfig,
+    PossessionScanResult,
+    scan_possession_events,
 )
 from sports.common.goalkeeper import apply_goalkeeper_teams, derive_gk_locks
 from sports.common.team import (
@@ -65,6 +73,12 @@ class VideoTrackingSession:
 
     kp_by_frame: dict | None = None
 
+    device: str | None = field(default=None, repr=False)
+    ball_model_path: str | None = field(default=None, repr=False)
+    _cache: FrameCache | None = field(default=None, repr=False)
+    _ball_by_frame: dict | None = field(default=None, repr=False)
+    _pass_frames: list | None = field(default=None, repr=False)
+    _pass_scan: PossessionScanResult | None = field(default=None, repr=False)
     _team_lock: TeamLocks | None = field(default=None, repr=False)
     _speed_transforms: dict | None = field(default=None, repr=False)
     _gap_filled_transforms: dict | None = field(default=None, repr=False)
@@ -178,6 +192,82 @@ class VideoTrackingSession:
         )
         return decorated
 
+    def ball_detections_by_frame(self) -> dict:
+        """Lazy load/compute dedicated ball YOLO detections."""
+        if self._ball_by_frame is None:
+            if self._cache is None:
+                raise RuntimeError("session cache was not initialized")
+            if self.device is None:
+                raise RuntimeError("session device was not initialized")
+
+            def factory():
+                return create_ball_detector(
+                    device=self.device,
+                    model_path=self.ball_model_path,
+                )
+
+            self._ball_by_frame = build_or_load_ball_detections(
+                self.source_video_path,
+                factory,
+                self._cache,
+                max_frames=self.max_frames,
+            )
+        return self._ball_by_frame
+
+    def pass_frames(self) -> list[tuple[int, sv.Detections]]:
+        """Yield replay-decorated detections with ball attached, in video order."""
+        if self._pass_frames is None:
+            locks = self.team_locks()
+            vel_smoother = KalmanVelocitySmoother(alpha=0.3)
+            tracked_by = self.tracked_by_frame()
+            ball_by = self.ball_detections_by_frame()
+            out = []
+            cap, _, _, _ = open_video(self.source_video_path)
+            try:
+                frame_idx = 0
+                while True:
+                    ret, _ = cap.read()
+                    if not ret:
+                        break
+                    frame_idx += 1
+                    if self.max_frames is not None and frame_idx > self.max_frames:
+                        break
+                    tracked = tracked_by.get(frame_idx, sv.Detections.empty())
+                    dets = self.apply_replay_teams(
+                        tracked,
+                        locks=locks,
+                        vel_smoother=vel_smoother,
+                        frame_idx=frame_idx,
+                    )
+                    dets = attach_ball(
+                        dets,
+                        ball_by.get(frame_idx, sv.Detections.empty()),
+                    )
+                    out.append((frame_idx, dets))
+            finally:
+                cap.release()
+            self._pass_frames = out
+        return self._pass_frames
+
+    @property
+    def pass_by_frame(self) -> dict[int, sv.Detections]:
+        return dict(self.pass_frames())
+
+    def pass_scan(self) -> PossessionScanResult:
+        if self._pass_scan is None:
+            config = PassDetectionConfig().for_frame_rate(self.fps)
+            transformers = (
+                self.gap_filled_transforms_by_frame if self.kp_by_frame else None
+            )
+            self._pass_scan = scan_possession_events(
+                iter(self.pass_frames()),
+                config=config,
+                metric=True,
+                transformers=transformers,
+                fps=float(self.fps),
+            )
+        return self._pass_scan
+
 
 def _create_player_detector_factory(args) -> Callable:
     player_model_id = getattr(args, "player_model_id", DEFAULT_PLAYER_MODEL_ID)
@@ -228,6 +318,7 @@ def build_video_tracking_session(
         player_model_id=player_model_id,
         pitch_backend=getattr(args, "pitch_detector", "yolo"),
         pitch_model_id=pitch_model_id,
+        ball_model_path=getattr(args, "ball_model_path", None),
     )
     det_by_frame = build_or_load_detections(
         args.source_video_path,
@@ -269,7 +360,7 @@ def build_video_tracking_session(
     )
     blocked_ids = collect_referee_tracker_ids(referee_frames)
 
-    return VideoTrackingSession(
+    session = VideoTrackingSession(
         source_video_path=args.source_video_path,
         fps=fps,
         width=width,
@@ -284,3 +375,7 @@ def build_video_tracking_session(
         blocked_ids=blocked_ids,
         kp_by_frame=kp_by_frame,
     )
+    session._cache = cache
+    session.device = args.device
+    session.ball_model_path = getattr(args, "ball_model_path", None)
+    return session

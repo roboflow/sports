@@ -5,7 +5,7 @@ import numpy as np
 import supervision as sv
 
 from sports.annotators.soccer import draw_pitch, draw_points_on_pitch, draw_goals_on_pitch, player_ellipse_annotator
-from sports.common.draw import draw_text_shadow
+from sports.common.draw import draw_text_shadow, make_end_card
 from sports.common.homography import valid_pitch_cm
 from sports.common.kinematics import (
     DEFAULT_MIN_SPEED_PX,
@@ -46,10 +46,16 @@ _CHIP_RAIL_W = 2
 _CHIP_TEXT_BGR = (240, 242, 248)
 
 
-def _team_color(team: int) -> sv.Color:
+def team_color(team: int) -> sv.Color:
+    """Return the palette color for team 0/1, else neutral."""
     if team in (0, 1):
         return TEAM_COLORS[team]
     return NEUTRAL_COLOR
+
+
+def team_color_bgr(team: int) -> tuple[int, int, int]:
+    """BGR tuple for OpenCV drawing from :func:`team_color`."""
+    return team_color(team).as_bgr()
 
 
 def team_ellipse_color_lookup(detections: sv.Detections) -> np.ndarray:
@@ -110,7 +116,7 @@ def draw_joystick_dots(
         team = int(teams[i])
         if team not in (0, 1):
             continue
-        color = _team_color(team).as_bgr()
+        color = team_color_bgr(team)
         x1, y1, x2, y2 = xyxy
         cx = (float(x1) + float(x2)) / 2.0
         cy = float(y2)
@@ -381,7 +387,7 @@ def draw_distance_labels(
         _, box_h, _vh, _baseline = _chip_box_size(label)
         cy = float(y1) - 8 - box_h * 0.5
         team = int(teams[i])
-        team_bgr = _team_color(team).as_bgr()
+        team_bgr = team_color_bgr(team)
         _draw_chip(frame, label, (cx, cy), team_bgr=team_bgr)
 
 
@@ -509,7 +515,7 @@ def draw_distance_end_card(
     n_top: int = 10,
 ) -> np.ndarray:
     """Black end-card with distance leaderboard."""
-    card = np.zeros((height, width, 3), dtype=np.uint8)
+    card = make_end_card(width, height, bg_bgr=(0, 0, 0))
     title = "DISTANCE LEADERBOARD"
     cv2.putText(
         card, title, (40, 60), cv2.FONT_HERSHEY_DUPLEX, 1.2,
