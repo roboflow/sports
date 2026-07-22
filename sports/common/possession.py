@@ -10,7 +10,6 @@ import supervision as sv
 from sports.configs.soccer import (
     BALL_CLASS_ID as ROLE_BALL,
     GOALKEEPER_CLASS_ID as ROLE_GOALKEEPER,
-    PLAYER_CLASS_ID as ROLE_PLAYER,
 )
 from sports.common.geometry import unit
 from sports.common.kinematics import feet_xy, player_mask

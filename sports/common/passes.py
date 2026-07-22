@@ -53,8 +53,6 @@ from sports.common.possession import (
     ball_departed_for_one_touch,
     ball_redirected_at_touch,
     ball_xy,
-    bbox_center_xy,
-    find_active_carrier,
     find_control_carrier,
     find_reception_carrier,
     is_aerial_flyby_below_feet,
@@ -620,47 +618,6 @@ def _opponent_active_control_frames(
             continue
         count += 1
     return count
-
-
-def _opponent_secured_control_between(
-    frames_by_idx: dict[int, sv.Detections],
-    *,
-    start_frame: int,
-    end_frame: int,
-    passer_team: int,
-    config: PassDetectionConfig,
-    transformers: dict[int, object],
-    metric: bool,
-    fps: float = 25.0,
-) -> bool:
-    """True when an opponent secured brief control (not a one-frame fly-by)."""
-    first = _first_opponent_touch_in_window(
-        frames_by_idx,
-        start_frame=start_frame,
-        end_frame=end_frame,
-        passer_team=passer_team,
-        config=config,
-        transformers=transformers,
-        metric=metric,
-        require_control=True,
-        fps=fps,
-    )
-    if first is None:
-        return False
-    opp_frame, opp_tid, _ = first
-    return (
-        _interceptor_secured_control_frame(
-            frames_by_idx,
-            start_frame=opp_frame,
-            end_frame=end_frame,
-            interceptor_tid=opp_tid,
-            config=config,
-            transformers=transformers,
-            metric=metric,
-            fps=fps,
-        )
-        is not None
-    )
 
 
 def _opponent_blocks_between(
@@ -1788,47 +1745,6 @@ def _interceptor_follow_through_after_redirect(
             and gap <= config.redirect_instant_pass_max_gap_frames
         ):
             return True
-    return False
-
-
-def _opponent_redirect_in_gap(
-    frames_by_idx: dict[int, sv.Detections],
-    *,
-    start_frame: int,
-    end_frame: int,
-    passer_team: int,
-    config: PassDetectionConfig,
-    transformers: dict[int, object],
-    metric: bool,
-    fps: float,
-) -> bool:
-    """True when an opponent redirect touch occurs between two teammate beats."""
-    for frame_idx in range(start_frame + 1, end_frame):
-        dets = frames_by_idx.get(frame_idx)
-        if dets is None:
-            continue
-        transformer = transformers.get(frame_idx) if metric else None
-        carrier, touch_kind = _active_carrier(
-            dets, transformer=transformer, config=config
-        )
-        touch_kind = touch_kind or "reception"
-        if carrier is None or int(carrier.team) == passer_team:
-            continue
-        if not _ball_redirected(frames_by_idx, frame_idx, config=config):
-            continue
-        if not _touch_valid_or_redirect(
-            dets,
-            carrier,
-            touch_kind=touch_kind,
-            frames_by_idx=frames_by_idx,
-            frame_idx=frame_idx,
-            config=config,
-            transformers=transformers,
-            metric=metric,
-            fps=fps,
-        ):
-            continue
-        return True
     return False
 
 
