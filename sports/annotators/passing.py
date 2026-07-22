@@ -7,6 +7,8 @@ import numpy as np
 import supervision as sv
 
 from sports.annotators.motion import (
+    RADAR_MINIMAP_PAD,
+    RADAR_MINIMAP_SCALE,
     annotate_team_ellipses,
     draw_radar_minimap,
     team_color_bgr,
@@ -14,6 +16,7 @@ from sports.annotators.motion import (
 )
 from sports.common.draw import (
     ROBOFLOW_PURPLE_BGR,
+    draw_branding_tag,
     draw_hud_bar,
     draw_score_chip,
     draw_text_shadow,
@@ -25,7 +28,8 @@ from sports.common.pass_network import (
     PassNetwork,
     strongest_collaboration_pair,
 )
-from sports.common.pass_pitch import image_to_pitch_m, pitch_circle_to_image
+from sports.common.pass_options import PassOption, PassWeights, remap_lane_debug_to_pitch_cm
+from sports.common.pass_pitch import image_to_pitch_cm, image_to_pitch_m, pitch_circle_to_image, pitch_cm_to_image
 from sports.common.passes import InferredPass, InferredTurnover, passes_for_overlay
 from sports.common.possession import ball_xy
 from sports.common.view import ViewTransformer
@@ -33,6 +37,9 @@ from sports.configs.soccer import BALL_CLASS_ID
 
 TURNOVER_ARROW_BGR = (48, 168, 255)
 CARRIER_SHADOW_BGR = (228, 228, 228)
+_CORRIDOR_ALPHA_VIDEO = 0.38
+_CORRIDOR_ALPHA_RADAR = 0.45
+_BLOCKER_BGR = (40, 40, 255)
 
 _BALL_TRI = sv.TriangleAnnotator(
     color=sv.Color.from_hex("#FFD700"),
@@ -555,15 +562,477 @@ def draw_pass_network_end_card(
     return card
 
 
+RANK_LABELS = ("BEST", "2ND", "3RD")
+# Green / gold / orange (BGR) — matches Football AI / fork freeze demos.
+RANK_COLORS_BGR = (
+    (60, 220, 60),
+    (0, 215, 255),
+    (40, 140, 255),
+)
+
+
+def _corridor_image_polygon(
+    corridor_polygon_cm: np.ndarray,
+    transformer: ViewTransformer,
+    frame_shape: tuple[int, ...],
+) -> np.ndarray | None:
+    """Project a pitch corridor (cm) onto image pixels."""
+    img = pitch_cm_to_image(corridor_polygon_cm, transformer)
+    if img is None or len(img) < 3:
+        return None
+    h, w = frame_shape[:2]
+    poly = img.astype(np.int32)
+    if not (
+        (poly[:, 0] >= -w)
+        & (poly[:, 0] <= 2 * w)
+        & (poly[:, 1] >= -h)
+        & (poly[:, 1] <= 2 * h)
+    ).any():
+        return None
+    return poly
+
+
+def draw_pass_corridors_on_frame(
+    frame: np.ndarray,
+    options: list[PassOption],
+    transformer: ViewTransformer,
+    *,
+    display_ranks: list[int] | None = None,
+) -> np.ndarray:
+    """Draw pitch-space pass corridors on the main camera view (H^-1)."""
+    out = frame
+    for idx, option in enumerate(options):
+        rank = display_ranks[idx] if display_ranks is not None else idx
+        debug = option.lane_debug
+        if debug is None:
+            continue
+        poly = _corridor_image_polygon(
+            debug.corridor_polygon_cm, transformer, out.shape
+        )
+        if poly is None:
+            continue
+        color = RANK_COLORS_BGR[min(rank, len(RANK_COLORS_BGR) - 1)]
+        overlay = out.copy()
+        cv2.fillPoly(overlay, [poly], color)
+        out = cv2.addWeighted(
+            overlay, _CORRIDOR_ALPHA_VIDEO, out, 1.0 - _CORRIDOR_ALPHA_VIDEO, 0
+        )
+        cv2.polylines(out, [poly], isClosed=True, color=color, thickness=3)
+    return out
+
+
+def draw_blocking_rivals_on_frame(
+    frame: np.ndarray,
+    options: list[PassOption],
+    *,
+    feet: np.ndarray,
+) -> np.ndarray:
+    """Mark rivals counted inside a corridor — compact red ! at feet."""
+    out = frame
+    drawn: set[int] = set()
+    for option in options:
+        debug = option.lane_debug
+        if debug is None:
+            continue
+        for idx in debug.blocking_rival_indices:
+            if idx in drawn or idx >= len(feet):
+                continue
+            drawn.add(idx)
+            x, y = int(feet[idx, 0]), int(feet[idx, 1])
+            cv2.circle(out, (x, y), 14, _BLOCKER_BGR, -1, cv2.LINE_AA)
+            cv2.putText(
+                out,
+                "!",
+                (x - 7, y + 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+    return out
+
+
+def apply_pass_lane_geometry(
+    frame: np.ndarray,
+    options: list[PassOption],
+    transformer: ViewTransformer,
+    feet: np.ndarray,
+) -> np.ndarray:
+    """Shaded corridors + rival blockers under player annotations."""
+    out = draw_pass_corridors_on_frame(frame, options, transformer)
+    return draw_blocking_rivals_on_frame(out, options, feet=feet)
+
+
+def _pitch_cm_to_radar_px(
+    points_cm: np.ndarray,
+    *,
+    scale: float = RADAR_MINIMAP_SCALE,
+    padding: int = RADAR_MINIMAP_PAD,
+) -> np.ndarray:
+    pts = np.asarray(points_cm, dtype=np.float64).reshape(-1, 2)
+    return np.stack(
+        [
+            (pts[:, 0] * scale + padding).astype(np.int32),
+            (pts[:, 1] * scale + padding).astype(np.int32),
+        ],
+        axis=1,
+    )
+
+
+def draw_pass_lanes_on_radar(
+    radar: np.ndarray,
+    options: list[PassOption],
+    pitch_cm: np.ndarray,
+    *,
+    scale: float = RADAR_MINIMAP_SCALE,
+    padding: int = RADAR_MINIMAP_PAD,
+) -> np.ndarray:
+    """Overlay ranked pass corridors and blocking rivals on the minimap."""
+    out = radar.copy()
+    drawn: set[int] = set()
+    for idx, option in enumerate(options):
+        debug = option.lane_debug
+        if debug is None:
+            continue
+        color = RANK_COLORS_BGR[min(idx, len(RANK_COLORS_BGR) - 1)]
+        poly = _pitch_cm_to_radar_px(
+            debug.corridor_polygon_cm, scale=scale, padding=padding
+        )
+        overlay = out.copy()
+        cv2.fillPoly(overlay, [poly], color)
+        out = cv2.addWeighted(
+            overlay, _CORRIDOR_ALPHA_RADAR, out, 1.0 - _CORRIDOR_ALPHA_RADAR, 0
+        )
+        cv2.polylines(out, [poly], isClosed=True, color=color, thickness=2)
+        for bi in debug.blocking_rival_indices:
+            if bi in drawn or bi >= len(pitch_cm):
+                continue
+            drawn.add(bi)
+            pt = _pitch_cm_to_radar_px(
+                pitch_cm[bi : bi + 1], scale=scale, padding=padding
+            )[0]
+            cv2.circle(out, tuple(pt), 12, _BLOCKER_BGR, -1, cv2.LINE_AA)
+            cv2.putText(
+                out,
+                "!",
+                (pt[0] - 5, pt[1] + 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+    return out
+
+
+def draw_pass_lane_legend(frame: np.ndarray) -> np.ndarray:
+    """Short legend for corridor overlays."""
+    lines = (
+        "shaded = pass corridor (wider on long passes)",
+        "green / gold / orange = BEST / 2ND / 3RD",
+        "red ! = rival inside corridor",
+    )
+    y = 78
+    for line in lines:
+        cv2.putText(
+            frame,
+            line,
+            (12, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.42,
+            (230, 230, 230),
+            1,
+            cv2.LINE_AA,
+        )
+        y += 18
+    return frame
+
+
+def draw_carrier_spotlight(
+    dimmed: np.ndarray,
+    original: np.ndarray,
+    center: tuple[int, int],
+    *,
+    radius: int = 150,
+    strength: float = 0.62,
+) -> np.ndarray:
+    """Keep the ball carrier readable while the rest of the frame is dimmed."""
+    h, w = dimmed.shape[:2]
+    cx, cy = center
+    mask = np.zeros((h, w), dtype=np.float32)
+    cv2.circle(mask, (cx, cy), radius, 1.0, -1, cv2.LINE_AA)
+    mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=radius * 0.38)
+    mask = (mask[..., None] * strength).astype(np.float32)
+    out = dimmed.astype(np.float32) * (1.0 - mask) + original.astype(np.float32) * mask
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def draw_carrier_pulse(
+    frame: np.ndarray,
+    center: tuple[int, int],
+    t: float,
+    *,
+    color_bgr: tuple[int, int, int] = ROBOFLOW_PURPLE_BGR,
+) -> None:
+    """Animated focus rings on the ball carrier."""
+    cx, cy = center
+    for i, base_r in enumerate((22, 36, 52)):
+        phase = (t + i * 0.22) % 1.0
+        wave = 0.5 + 0.5 * np.sin(phase * 2.0 * np.pi)
+        radius = int(base_r * (0.92 + 0.12 * wave))
+        alpha = 0.22 + 0.18 * wave
+        layer = frame.copy()
+        cv2.circle(layer, (cx, cy), radius, color_bgr, 2, cv2.LINE_AA)
+        frame[:] = cv2.addWeighted(layer, alpha, frame, 1.0 - alpha, 0)
+    cv2.circle(frame, (cx, cy), 10, (255, 255, 255), -1, cv2.LINE_AA)
+    cv2.circle(frame, (cx, cy), 14, color_bgr, 2, cv2.LINE_AA)
+
+
+def draw_receiver_highlight(
+    frame: np.ndarray,
+    center: tuple[int, int],
+    rank: int,
+    color_bgr: tuple[int, int, int],
+    *,
+    alpha: float = 1.0,
+) -> None:
+    """Ring at the receiver feet (BEST gets a white outer ring)."""
+    rx, ry = center
+    ring = 20 if rank == 0 else 14
+    layer = frame.copy()
+    cv2.circle(layer, (rx, ry), ring, color_bgr, 3 if rank == 0 else 2, cv2.LINE_AA)
+    if rank == 0:
+        cv2.circle(layer, (rx, ry), ring + 6, (255, 255, 255), 1, cv2.LINE_AA)
+    if alpha >= 0.99:
+        frame[:] = layer
+    else:
+        frame[:] = cv2.addWeighted(layer, alpha, frame, 1.0 - alpha, 0)
+
+
+def pass_line_label_xy(
+    start: tuple[int, int],
+    end: tuple[int, int],
+    *,
+    along: float = 0.42,
+    offset_px: int = 14,
+) -> tuple[int, int]:
+    """Point beside the pass segment for a distance label."""
+    sx, sy = start
+    ex, ey = end
+    px = sx + along * (ex - sx)
+    py = sy + along * (ey - sy)
+    dx, dy = ex - sx, ey - sy
+    norm = float(np.hypot(dx, dy)) or 1.0
+    return (
+        int(px - dy / norm * offset_px),
+        int(py + dx / norm * offset_px),
+    )
+
+
+def draw_pass_analysis_panel(
+    frame: np.ndarray,
+    *,
+    progress: float,
+    revealed: int,
+    total: int = 3,
+    rank_label: str | None = None,
+    rank_color: tuple[int, int, int] | None = None,
+) -> np.ndarray:
+    """Bottom broadcast-style panel for the freeze / reveal sequence."""
+    h, w = frame.shape[:2]
+    panel_h = 78
+    panel_w = min(460, w - 48)
+    px = (w - panel_w) // 2
+    py = h - panel_h - 62
+
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (px, py), (px + panel_w, py + panel_h), (16, 16, 20), -1)
+    cv2.rectangle(overlay, (px, py), (px + panel_w, py + panel_h), (48, 48, 58), 1)
+    cv2.rectangle(overlay, (px, py), (px + panel_w, py + 4), ROBOFLOW_PURPLE_BGR, -1)
+    frame[:] = cv2.addWeighted(overlay, 0.9, frame, 0.1, 0)
+
+    if revealed == 0:
+        title = "PASS ANALYSIS"
+        step = int(progress * 9) % 3
+        dots = "." * (step + 1)
+        subtitle = f"Scanning open lanes{dots}"
+    else:
+        label = rank_label or f"OPTION {revealed}"
+        title = label
+        subtitle = f"Route {revealed} of {total}  |  ranked by lane + distance"
+
+    draw_text_shadow(
+        frame, title, (px + 18, py + 30),
+        font_scale=0.62, color_bgr=rank_color or (255, 255, 255), thickness=2,
+    )
+    draw_text_shadow(
+        frame, subtitle, (px + 18, py + 58),
+        font_scale=0.46, color_bgr=(175, 175, 185), thickness=1,
+    )
+
+    bar_w = panel_w - 36
+    bar_x = px + 18
+    bar_y = py + panel_h - 12
+    cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + 4), (40, 40, 48), -1)
+    fill = int(bar_w * ease_out_cubic(progress if revealed else (0.35 + 0.65 * progress)))
+    cv2.rectangle(
+        frame,
+        (bar_x, bar_y),
+        (bar_x + max(fill, 6), bar_y + 4),
+        rank_color or ROBOFLOW_PURPLE_BGR,
+        -1,
+    )
+    return frame
+
+
+def draw_pass_alternatives_overlay(
+    frame: np.ndarray,
+    dets: sv.Detections,
+    event,
+    *,
+    revealed_options: int | None = None,
+    reveal_progress: float = 1.0,
+    transformer=None,
+    locked_goal_defenders: tuple[int, int] | None = None,
+    metric: bool = True,
+    weights: PassWeights | None = None,
+    hud_title: str = "PASS ALTERNATIVES  -  top open lanes",
+) -> np.ndarray:
+    """Dimmed freeze with ranked corridors + arrows — spotlight, chips, panel."""
+    dim = (frame.astype(np.float32) * 0.32).astype(np.uint8)
+    weights = weights or PassWeights.metric()
+    options = list(event.options)
+    feet = feet_xy(dets)
+
+    if transformer is not None and options:
+        pitch_cm = image_to_pitch_cm(feet, transformer)
+        if pitch_cm is not None:
+            options = remap_lane_debug_to_pitch_cm(
+                options, event.carrier, pitch_cm, feet, weights=weights,
+            )
+
+    visible = options
+    if revealed_options is not None:
+        visible = options[: max(0, revealed_options)]
+
+    if transformer is not None and visible:
+        dim = apply_pass_lane_geometry(dim, visible, transformer, feet)
+
+    dim = annotate_pass_players(dim, dets, show_tracker_ids=True)
+    dim = annotate_ball(dim, dets)
+
+    carrier_xy = feet[event.carrier.index]
+    cx, cy = int(carrier_xy[0]), int(carrier_xy[1])
+    dim = draw_carrier_spotlight(dim, frame, (cx, cy))
+
+    n_total = min(3, len(options))
+    progress = float(np.clip(reveal_progress, 0.0, 1.0))
+    phase_revealed = 0 if revealed_options == 0 else (revealed_options or n_total)
+
+    def _decorate_radar(radar: np.ndarray) -> np.ndarray:
+        if not visible or transformer is None:
+            return radar
+        pitch_cm = image_to_pitch_cm(feet, transformer)
+        if pitch_cm is None:
+            return radar
+        return draw_pass_lanes_on_radar(radar, visible, pitch_cm)
+
+    if revealed_options == 0:
+        draw_carrier_pulse(dim, (cx, cy), progress)
+        draw_score_chip(dim, "ON BALL", (cx, cy - 42), bg_bgr=ROBOFLOW_PURPLE_BGR)
+        dim = draw_pass_analysis_panel(
+            dim, progress=progress, revealed=0, total=n_total,
+        )
+        dim = draw_radar_minimap(
+            dim, dets, transformer, locked_goal_defenders=locked_goal_defenders,
+        )
+        return draw_branding_tag(draw_hud_bar(dim, "PASS ALTERNATIVES"))
+
+    draw_carrier_pulse(dim, (cx, cy), min(1.0, progress * 0.35 + 0.65))
+    draw_carrier_ground_ellipse(
+        dim,
+        carrier_xy,
+        transformer=transformer,
+        color_bgr=CARRIER_SHADOW_BGR,
+        radius_m=0.55,
+        alpha=0.45,
+        filled=True,
+        thickness=2,
+        pulse_t=progress,
+    )
+
+    for rank, option in enumerate(visible):
+        color = RANK_COLORS_BGR[min(rank, len(RANK_COLORS_BGR) - 1)]
+        recv_xy = feet[option.receiver_index]
+        rx, ry = int(recv_xy[0]), int(recv_xy[1])
+        is_new = rank == len(visible) - 1
+        alpha = ease_out_cubic(progress) if is_new else 1.0
+        draw_glow_arrow(dim, (cx, cy), (rx, ry), color, thickness=5, alpha=alpha)
+        if alpha > 0.2:
+            draw_receiver_highlight(dim, (rx, ry), rank, color, alpha=alpha)
+        if alpha < 0.85:
+            continue
+        midx, midy = (cx + rx) // 2, (cy + ry) // 2
+        label = RANK_LABELS[min(rank, len(RANK_LABELS) - 1)]
+        chip = f"{label}  {option.score:.2f}"
+        if metric:
+            chip += f"  {option.length:.1f} m"
+        if option.rivals_in_lane:
+            chip += f"  ({option.rivals_in_lane} riv)"
+        if option.lane_debug and option.lane_debug.blocking_rival_indices:
+            chip += f"  !{len(option.lane_debug.blocking_rival_indices)}"
+        draw_score_chip(dim, chip, (midx, midy), bg_bgr=color)
+        if metric:
+            lx, ly = pass_line_label_xy((cx, cy), (rx, ry))
+            draw_text_shadow(
+                dim, f"{option.length:.1f} m", (lx - 18, ly - 6),
+                font_scale=0.58, color_bgr=color, thickness=2,
+            )
+
+    latest_rank = max(len(visible) - 1, 0)
+    dim = draw_pass_analysis_panel(
+        dim,
+        progress=progress,
+        revealed=phase_revealed,
+        total=n_total,
+        rank_label=RANK_LABELS[min(latest_rank, len(RANK_LABELS) - 1)] if visible else None,
+        rank_color=RANK_COLORS_BGR[min(latest_rank, len(RANK_COLORS_BGR) - 1)] if visible else None,
+    )
+    if visible and transformer is not None:
+        dim = draw_pass_lane_legend(dim)
+    dim = draw_radar_minimap(
+        dim,
+        dets,
+        transformer,
+        locked_goal_defenders=locked_goal_defenders,
+        decorate_radar=_decorate_radar if visible else None,
+    )
+    return draw_branding_tag(draw_hud_bar(dim, hud_title))
+
+
 # Re-export for runners that already use motion.draw_radar_minimap
 __all__ = [
     "annotate_ball",
     "annotate_pass_players",
+    "apply_pass_lane_geometry",
+    "draw_blocking_rivals_on_frame",
     "draw_carrier_ground_ellipse",
+    "draw_carrier_pulse",
+    "draw_carrier_spotlight",
     "draw_collaboration_web",
+    "draw_glow_arrow",
     "draw_hud_bar",
+    "draw_pass_alternatives_overlay",
+    "draw_pass_analysis_panel",
+    "draw_pass_corridors_on_frame",
+    "draw_pass_lane_legend",
+    "draw_pass_lanes_on_radar",
     "draw_pass_network_end_card",
     "draw_pass_network_frame_overlays",
     "draw_radar_minimap",
+    "draw_receiver_highlight",
     "CARRIER_SHADOW_BGR",
+    "RANK_COLORS_BGR",
+    "RANK_LABELS",
 ]

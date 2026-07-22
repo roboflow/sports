@@ -74,8 +74,10 @@ class TeamClassifier:
         self.features_model = SiglipVisionModel.from_pretrained(
             SIGLIP_MODEL_PATH).to(device)
         self.processor = AutoProcessor.from_pretrained(SIGLIP_MODEL_PATH)
-        self.reducer = umap.UMAP(n_components=3)
-        self.cluster_model = KMeans(n_clusters=2)
+        # Deterministic + single-threaded: avoids OpenMP/numba segfaults after MPS
+        # SigLIP and keeps pink/cyan assignment stable across demo renders.
+        self.reducer = umap.UMAP(n_components=3, n_jobs=1, random_state=0)
+        self.cluster_model = KMeans(n_clusters=2, n_init=10, random_state=0)
 
     def extract_features(self, crops: List[np.ndarray]) -> np.ndarray:
         """
@@ -109,8 +111,32 @@ class TeamClassifier:
             crops (List[np.ndarray]): List of image crops.
         """
         data = self.extract_features(crops)
+        # UMAP/numba can SIGSEGV while the MPS runtime is still active after
+        # SigLIP; park the vision weights on CPU for the reduce+cluster step.
+        data = np.ascontiguousarray(data, dtype=np.float64)
+        was_mps = str(self.device).startswith("mps")
+        if was_mps:
+            self.features_model.to("cpu")
+            try:
+                import torch
+
+                if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                    torch.mps.empty_cache()
+            except Exception:
+                pass
         projections = self.reducer.fit_transform(data)
         self.cluster_model.fit(projections)
+        labels = np.asarray(self.cluster_model.labels_, dtype=int)
+        counts = np.bincount(labels, minlength=2)
+        # Rare collapse: almost every crop lands in one cluster. Retry once with a
+        # different UMAP seed so demos don't paint the whole pitch one colour.
+        if len(labels) >= 20 and int(counts.min()) < max(5, int(0.12 * len(labels))):
+            self.reducer = umap.UMAP(n_components=3, n_jobs=1, random_state=1)
+            projections = self.reducer.fit_transform(data)
+            self.cluster_model = KMeans(n_clusters=2, n_init=10, random_state=1)
+            self.cluster_model.fit(projections)
+        if was_mps:
+            self.features_model.to(self.device)
 
     def predict(self, crops: List[np.ndarray]) -> np.ndarray:
         """
