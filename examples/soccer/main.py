@@ -5,20 +5,23 @@ from typing import Iterator, List
 import os
 import cv2
 import numpy as np
-import supervision as sv
+import supervision as sv  # type: ignore
 from tqdm import tqdm
 from ultralytics import YOLO
+
+PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
+PITCH_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-pitch-detection.pt')
+BALL_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-ball-detection.pt')
+
 
 from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
 from sports.common.ball import BallTracker, BallAnnotator
 from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
 from sports.configs.soccer import SoccerPitchConfiguration
+from sports.common.possession import PossessionTracker
 
-PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PLAYER_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-player-detection.pt')
-PITCH_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-pitch-detection.pt')
-BALL_DETECTION_MODEL_PATH = os.path.join(PARENT_DIR, 'data/football-ball-detection.pt')
 
 BALL_CLASS_ID = 0
 GOALKEEPER_CLASS_ID = 1
@@ -80,6 +83,8 @@ class Mode(Enum):
     PLAYER_TRACKING = 'PLAYER_TRACKING'
     TEAM_CLASSIFICATION = 'TEAM_CLASSIFICATION'
     RADAR = 'RADAR'
+    MATCH_ANALYTICS = 'MATCH_ANALYTICS'
+    
 
 
 def get_crops(frame: np.ndarray, detections: sv.Detections) -> List[np.ndarray]:
@@ -128,6 +133,142 @@ def resolve_goalkeepers_team_id(
         goalkeepers_team_id.append(0 if dist_0 < dist_1 else 1)
     return np.array(goalkeepers_team_id)
 
+def draw_possession_overlay(frame, stable_possession, percentages, team_possession=None, stable_possesion=None, closest_idx=None, distance=None, pass_count=None):
+    h, w = frame.shape[:2]
+    overlay = frame.copy()
+    panel_height, panel_width = 140, 500
+    x, y = 15, 15
+    
+    cv2.rectangle(overlay, (x-8, y-8), (x + panel_width, y + panel_height), (0, 0, 0), -1)
+    cv2.rectangle(overlay, (x-8, y-8), (x + panel_width, y + panel_height), (255, 255, 255), 2)
+    cv2.addWeighted(overlay, 0.8, frame, 0.2, 0, frame)
+
+    possession_team = stable_possession["team"]
+    confidence = stable_possession["confidence"]
+    duration = stable_possession["duration"]
+    
+    color = (255, 20, 147) if possession_team == 0 else (0, 191, 255) if possession_team == 1 else (128, 128, 128)
+    status_text = f"TEAM {possession_team} POSSESSION" if possession_team in [0,1] else "NO POSSESSION"
+    
+    total_pct = percentages[0] + percentages[1] + percentages.get(None, 0)
+    if total_pct > 0:
+        bar_width, bar_height = 320, 25
+        bar_x, bar_y = x + 10, y + 15
+        
+        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (50, 50, 50), -1)
+        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (255, 255, 255), 1)
+        
+        team0_width = int((percentages[0] / 100) * bar_width)
+        if team0_width > 0:
+            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + team0_width, bar_y + bar_height), (255, 20, 147), -1)
+        
+        team1_width = int((percentages[1] / 100) * bar_width)
+        if team1_width > 0:
+            cv2.rectangle(frame, (bar_x + team0_width, bar_y), (bar_x + team0_width + team1_width, bar_y + bar_height), (0, 191, 255), -1)
+    
+    cv2.putText(frame, f"Team 0: {percentages[0]:.1f}%", (x + 10, y + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 20, 147), 2)
+    cv2.putText(frame, f"Team 1: {percentages[1]:.1f}%", (x + 130, y + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 191, 255), 2)
+    
+    if None in percentages:
+        cv2.putText(frame, f"Contested: {percentages[None]:.1f}%", (x + 250, y + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
+    
+    cv2.circle(frame, (x + 15, y + 85), 8, color, -1)
+    cv2.circle(frame, (x + 15, y + 85), 8, (255, 255, 255), 2)
+    cv2.putText(frame, status_text, (x + 35, y + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    
+    if pass_count is not None:
+        cv2.putText(frame, f"Pass Count - Team 0: {pass_count[0]}, Team 1: {pass_count[1]}", (x + 10, y + 115), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 2)
+
+def run_analytics(source_video_path: str, device: str) -> Iterator[np.ndarray]:
+    player_detection_model = YOLO(PLAYER_DETECTION_MODEL_PATH).to(device=device)
+    ball_detection_model = YOLO(BALL_DETECTION_MODEL_PATH).to(device=device)
+    pitch_detection_model = YOLO(PITCH_DETECTION_MODEL_PATH).to(device=device)
+
+    frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
+    ball_tracker = BallTracker(buffer_size=5)
+    ball_annotator = BallAnnotator(radius=6, buffer_size=10)
+    pass_count = {0: 0, 1: 0}
+    current_player_possession = None
+    current_team_possession = None
+    slicer = sv.InferenceSlicer(
+        callback=lambda image_slice: sv.Detections.from_ultralytics(
+            ball_detection_model(image_slice, imgsz=640, verbose=False)[0]),
+        slice_wh=(640, 640))
+
+    crops = []
+    for frame in tqdm(frame_generator, desc='collecting crops'):
+        detections = sv.Detections.from_ultralytics(
+            player_detection_model(frame, imgsz=1280, verbose=False)[0])
+        crops += get_crops(frame, detections[detections.class_id == PLAYER_CLASS_ID])
+
+    team_classifier = TeamClassifier(device=device)
+    team_classifier.fit(crops)
+    frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
+    tracker = sv.ByteTrack(minimum_consecutive_frames=3)
+    possession_tracker = PossessionTracker(smoothing_window=3, confidence_threshold=0.6)
+    possession_statistics = {0: 0, 1: 0, None: 0}
+
+    for frame_count, frame in enumerate(frame_generator):
+        ball_detections = slicer(frame).with_nms(threshold=0.5)
+        if len(ball_detections) == 0:
+            predicted_detections = ball_tracker.predict(BALL_CLASS_ID)
+            ball_detections = predicted_detections if predicted_detections is not None else sv.Detections.empty()
+        
+        if ball_detections is not None and len(ball_detections) > 0:
+            ball_detections = ball_tracker.update(ball_detections)
+        else:
+            ball_detections = sv.Detections.empty()
+            
+        annotated_frame = frame.copy()
+        annotated_frame = ball_annotator.annotate(annotated_frame, ball_detections)
+        keypoints = sv.KeyPoints.from_ultralytics(pitch_detection_model(frame, verbose=False)[0])
+        detections = sv.Detections.from_ultralytics(player_detection_model(frame, imgsz=1280, verbose=False)[0])
+        detections = tracker.update_with_detections(detections)
+        all_tracker_ids = []
+
+        players = detections[detections.class_id == PLAYER_CLASS_ID]
+        if len(players) > 0:
+            all_tracker_ids.extend(players.tracker_id)
+        players_team_id = team_classifier.predict(get_crops(frame, players))
+
+        goalkeepers = detections[detections.class_id == GOALKEEPER_CLASS_ID]
+        if len(goalkeepers) > 0:
+            all_tracker_ids.extend(goalkeepers.tracker_id)
+        goalkeepers_team_id = resolve_goalkeepers_team_id(players, players_team_id, goalkeepers)
+
+        referees = detections[detections.class_id == REFEREE_CLASS_ID]
+        all_tracker_ids = np.array(all_tracker_ids) if all_tracker_ids else None
+        
+        possession_result = possession_tracker.calculate_ball_possession_distance(
+            ball_detections, players, players_team_id, goalkeepers, 
+            goalkeepers_team_id, keypoints, CONFIG, all_tracker_ids)
+        team_possession, closest_idx, distance = possession_result if possession_result else (None, None, None)
+
+        possession_dict = {"team": team_possession, "confidence": 1.0 if team_possession is not None else 0.0,
+                         "method": "distance_based", "duration": 0}
+        stable_possession = possession_tracker.update(possession_dict, frame_count)
+        possession_statistics[stable_possession["team"]] += 1
+
+        # Update pass count if possession has changed
+        if stable_possession is not None and closest_idx is not None:
+            if current_team_possession == team_possession and current_player_possession != closest_idx:
+                pass_count[current_team_possession] += 1
+            current_player_possession = closest_idx
+            current_team_possession = team_possession
+
+        detections = sv.Detections.merge([players, goalkeepers, referees])
+        color_lookup = np.array(players_team_id.tolist() + goalkeepers_team_id.tolist() + 
+                              [REFEREE_CLASS_ID] * len(referees))
+        labels = [str(tracker_id) for tracker_id in detections.tracker_id]
+
+        annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, detections, custom_color_lookup=color_lookup)
+        annotated_frame = ELLIPSE_LABEL_ANNOTATOR.annotate(annotated_frame, detections, labels, custom_color_lookup=color_lookup)
+        annotated_frame = ball_annotator.annotate(annotated_frame, ball_detections, possession_team=stable_possession["team"])
+
+        total_frames = sum(possession_statistics.values())
+        percentages = {team: (count/total_frames)*100 for team, count in possession_statistics.items()}
+        draw_possession_overlay(annotated_frame, stable_possession, percentages, team_possession, stable_possession, closest_idx, distance, pass_count)
+        yield annotated_frame
 
 def render_radar(
     detections: sv.Detections,
@@ -226,7 +367,6 @@ def run_ball_detection(source_video_path: str, device: str) -> Iterator[np.ndarr
 
     slicer = sv.InferenceSlicer(
         callback=callback,
-        overlap_filter_strategy=sv.OverlapFilter.NONE,
         slice_wh=(640, 640),
     )
 
@@ -405,18 +545,18 @@ def main(source_video_path: str, target_video_path: str, device: str, mode: Mode
     elif mode == Mode.RADAR:
         frame_generator = run_radar(
             source_video_path=source_video_path, device=device)
+    elif mode == Mode.MATCH_ANALYTICS:
+        frame_generator = run_analytics(
+            source_video_path=source_video_path, device=device)
     else:
         raise NotImplementedError(f"Mode {mode} is not implemented.")
 
     video_info = sv.VideoInfo.from_video_path(source_video_path)
     with sv.VideoSink(target_video_path, video_info) as sink:
-        for frame in frame_generator:
+        for frame in tqdm(frame_generator, desc=f"Processing {mode.value}"):
             sink.write_frame(frame)
-
-            cv2.imshow("frame", frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-        cv2.destroyAllWindows()
+    
+    print(f"✅ Video saved to: {target_video_path}")
 
 
 if __name__ == '__main__':

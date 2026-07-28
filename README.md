@@ -1,51 +1,114 @@
-<div align="center">
+# Soccer Match Analytics
 
-  <h1>sports</h1>
+Computer vision pipeline for turning raw soccer footage into an annotated match analysis video.
+It detects and tracks players, goalkeepers, referees, the ball, and pitch keypoints, then estimates team possession and passes in perspective-corrected field coordinates.
+I built the analytics layer on top of [`roboflow/sports`](https://github.com/roboflow/sports), adding temporal smoothing, short-gap ball tracking, and an in-video statistics overlay.
 
-[notebooks](https://github.com/roboflow/notebooks) | [inference](https://github.com/roboflow/inference) | [autodistill](https://github.com/autodistill/autodistill) | [maestro](https://github.com/roboflow/multimodal-maestro)
+## Demo
 
-</div>
+https://github.com/user-attachments/assets/d44728f8-c230-4d3a-9bb7-93ba1588fb97
 
-## 👋 hello
+## Highlights
 
-In sports, every centimeter and every second matter. That's why Roboflow decided to use sports as a testing ground to push our object detection, image segmentation, keypoint detection, and foundational models to their limits. This repository contains reusable tools that can be applied in sports and beyond.
+- Detects and tracks players, goalkeepers, referees, the ball, and pitch keypoints.
+- Classifies players by team and projects detections onto real pitch coordinates.
+- Estimates possession using the nearest player to the ball with three-frame smoothing.
+- Counts likely passes from possession continuity and tracked-player changes.
+- Extrapolates ball position across short detection gaps.
+- Produces an annotated video with possession percentages, pass counts, and a possession-colored ball trail.
 
-## 🥵 challenges
+## How It Works
 
-Are you also a fan of computer vision and sports?  We welcome contributions from anyone who shares our passion! Together, we can build powerful open-source tools for sports analytics. Here are the main challenges we're looking to tackle:
+1. **Detect and track:** object-detection models identify match participants, the ball, and pitch keypoints; tracked IDs maintain player continuity across frames.
+2. **Transform coordinates:** a homography maps image positions to the configured pitch coordinate system, preventing camera perspective from distorting distance calculations.
+3. **Estimate possession:** possession is assigned to the team of the nearest player or goalkeeper within a configurable distance threshold.
+4. **Stabilize predictions:** a three-frame window reduces rapid possession changes caused by noisy detections.
+5. **Generate analytics:** changes between tracked players on the same possessing team provide a heuristic pass count, while overlays visualize the results.
 
-- **Ball tracking:** Tracking the ball is extremely difficult due to its small size and rapid movements, especially in high-resolution videos.
-- **Reading jersey numbers:** Accurately reading player jersey numbers is often hampered by blurry videos, players turning away, or other objects obscuring the numbers.
-- **Player tracking:** Maintaining consistent player identification throughout a game is a challenge due to frequent occlusions caused by other players or objects on the field.
-- **Player re-identification:** Re-identifying players who have left and re-entered the frame is tricky, especially with moving cameras or when players are visually similar.
-- **Camera calibration:** Accurately calibrating camera views is crucial for extracting advanced statistics like player speed and distance traveled. This is a complex task due to the dynamic nature of sports and varying camera angles.
+## Technical Scope
 
-## 💻 install
+| Capability | Upstream `roboflow/sports` | This project |
+|:--|:--:|:--:|
+| Player, goalkeeper, referee, and ball detection | Yes | Yes |
+| Pitch-keypoint detection and field projection | Yes | Yes |
+| Player tracking and team classification | Yes | Yes |
+| Radar visualization | Yes | Yes |
+| `MATCH_ANALYTICS` processing mode | No | Yes |
+| Perspective-corrected possession estimation | No | Yes |
+| Temporal possession smoothing | No | Yes |
+| Heuristic pass counting | No | Yes |
+| Possession trail and statistics overlay | No | Yes |
+| Ball extrapolation during detection gaps | No | Yes |
 
-We don't have a Python package yet. Install from source in a
-[**Python>=3.8**](https://www.python.org/) environment.
+## Installation
+
+Python 3.8 or newer is required.
 
 ```bash
-pip install git+https://github.com/roboflow/sports.git
+git clone https://github.com/KomisD/sports.git
+cd sports/examples/soccer
+pip install -r requirements.txt
+./setup.sh
 ```
 
-## ⚽ datasets
+The setup script downloads the expected model weights into `examples/soccer/data/`:
 
-| use case                               | dataset                                                                                                                                                           |
-|:---------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| ⚽ soccer player detection              | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-players-detection-3zvbc)  |
-| ⚽ soccer ball detection                | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-ball-detection-rejhg)     |
-| ⚽ soccer pitch keypoint detection      | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/football-field-detection-f07vi)    |
-| 🏀 basketball court keypoint detection | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/basketball-court-detection-2)      |
-| 🏀 basketball jersey numbers ocr       | [![Download Dataset](https://app.roboflow.com/images/download-dataset-badge.svg)](https://universe.roboflow.com/roboflow-jvuqo/basketball-jersey-numbers-ocr)     |
+- `football-player-detection.pt`
+- `football-pitch-detection.pt`
+- `football-ball-detection.pt`
 
+The package can also be installed directly from GitHub:
 
-Visit [Roboflow Universe](https://universe.roboflow.com/) and explore other sport-related datasets.
+```bash
+pip install git+https://github.com/KomisD/sports.git
+```
 
-## 🔥 demos
+## Usage
 
+Run the analytics pipeline from `examples/soccer`:
+
+```bash
+python main.py \
+  --source_video_path data/2e57b9_0.mp4 \
+  --target_video_path data/2e57b9_0-match-analytics.mp4 \
+  --device cpu \
+  --mode MATCH_ANALYTICS
+```
+
+Use `cuda`, `mps`, or another supported device instead of `cpu` when available. The command writes the annotated result to `--target_video_path`.
+
+## Implementation
+
+### `sports/common/possession.py`
+
+- Introduces `PossessionTracker` for temporal smoothing and possession state.
+- Projects the ball and player detections into pitch coordinates.
+- Finds the closest eligible player and returns the estimated team, tracker ID, and distance.
+
+### `sports/common/ball.py`
+
+- Adds possession-aware trail colors, a current-ball marker, and team labels.
+- Adds constant-velocity position extrapolation when a ball detection is briefly missing.
+
+### `examples/soccer/main.py`
+
+- Adds the `MATCH_ANALYTICS` command-line mode.
+- Implements the two-pass analysis pipeline and video output.
+- Renders possession percentages, current possession, and pass counts.
+
+## Limitations
+
+This is an experimental analytics pipeline, not a source of validated match statistics. Possession and pass estimates depend on detection quality, visible pitch keypoints, team classification, and stable tracker IDs.
+
+- Processing is offline and uses two passes over the video, so it is not a real-time stream.
+- The pass heuristic does not verify ball flight, receiver control, minimum possession time, or restarts.
+- Occlusion and tracker-ID changes can produce false positives.
+- Ball extrapolation uses a simple constant-velocity assumption.
+- The analytics additions do not yet have an automated test suite.
+
+## Upstream Project and License
+
+This project builds on [`roboflow/sports`](https://github.com/roboflow/sports) and its soccer computer-vision examples. See [`LICENSE`](LICENSE) for licensing information; third-party libraries and model tooling retain their respective licenses.
+
+Original upstream demo:
 https://github.com/roboflow/sports/assets/26109316/7ad414dd-cc4e-476d-9af3-02dfdf029205
-
-## 🏆 contribution
-
-We love your input! [Let us know](https://github.com/roboflow/sports/issues) what else we should build!

@@ -1,0 +1,211 @@
+[33mcommit 3d460e42656afd3f7087c0621cbb2d0bc19e05b6[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: Chat gpt4 <gptchat094@gmail.com>
+Date:   Thu Jun 5 10:50:25 2025 +0000
+
+    Ball detection and possesion tracker
+
+[33mcommit 42c80c06b6b65a7f89455b89fe31cdf4c38ba227[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Tue May 27 10:58:09 2025 +0200
+
+    links to court keypoint and jersey numbers ocr datasets added
+
+[33mcommit 06053616f1f8a8ae1fa936eb00dcdc2e4f888bb1[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Mon Aug 19 15:31:17 2024 +0200
+
+    ready for tests
+
+[33mcommit b912176dc64d679c9daa10a29423a72255006636[m
+Merge: e15a43f 13fd1e6
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Mon Jul 29 10:22:00 2024 +0200
+
+    Merge remote-tracking branch 'origin/main'
+
+[33mcommit e15a43fda0f38c86e5298dcde0123cd8e4a4c535[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Mon Jul 29 10:21:52 2024 +0200
+
+    aff README.md UTF-8 encoding
+
+[33mcommit 13fd1e67b54ffab06cee82f26c0148b1197d527c[m
+Author: Piotr Skalski <piotr.skalski92@gmail.com>
+Date:   Fri Jul 26 01:30:46 2024 +0200
+
+    Update README.md
+
+[33mcommit 9ef1c273d78a947533f0cd971b75be7c833ff2a9[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Fri Jul 26 01:11:10 2024 +0200
+
+    soccer AI README.md update
+
+[33mcommit 975fe128420d86143793a92593746274a5192bdd[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Fri Jul 26 00:52:06 2024 +0200
+
+    soccer AI README.md update
+
+[33mcommit 288c69b61ca5d00cd5a5b30491875d1f411fb41a[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Thu Jul 25 18:18:04 2024 +0200
+
+    weights and data download added
+
+[33mcommit 69888ea27788aa75704ea8bcf24b124fc637478d[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Thu Jul 25 14:46:29 2024 +0200
+
+    ball annotator added
+
+[33mcommit 3d980bbd5e10f40b3d103b544b3ee92c5390650c[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Thu Jul 25 14:09:39 2024 +0200
+
+    add ball detection code
+
+[33mcommit 0cdd2fb1876a2925d0a591f9badc346d1d981535[m
+Author: Piotr Skalski <piotr.skalski92@gmail.com>
+Date:   Thu Jul 25 13:27:34 2024 +0200
+
+    Update README.md
+
+[33mcommit 0ebfe01ba4752ebd3c59ea6f393bfb57db77123a[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Thu Jul 25 11:02:06 2024 +0200
+
+    add ball detection code
+
+[33mcommit 90884a77273914d4cc931ab60b63d18d132be70f[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Thu Jul 25 09:22:24 2024 +0200
+
+    basic soccer AI `README.md`
+
+[33mcommit 9e44fe53b2fa74ae032519c1f85b9abbbfc19b2f[m
+Author: Piotr Skalski <piotr.skalski92@gmail.com>
+Date:   Thu Jul 25 08:31:09 2024 +0200
+
+    Update README.md
+
+[33mcommit 66a3f32ed6297fb3a06ec377448ef78e03b04db6[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Wed Jul 24 19:17:36 2024 +0200
+
+    initial version of radar added
+
+[33mcommit 9fad8d5a493687f9fddf9f6227e785e1445d3998[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Wed Jul 24 17:17:31 2024 +0200
+
+    goalkeepers team assignment based on team centroid proximity
+
+[33mcommit d01beef78d4c3d4be2dc6e9a237deba5fe7dbbba[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Wed Jul 24 17:00:56 2024 +0200
+
+    code refactor completed
+
+[33mcommit b420f521c5024e52a7e3a89fcfb68010714698ad[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Wed Jul 24 14:18:50 2024 +0200
+
+    initial version of pitch projection mode
+
+[33mcommit eb95f6d09c3ce08364ce989f953ae28e63f8c626[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Wed Jul 24 13:43:43 2024 +0200
+
+    basic inference pipeline + player detection and pitch detection models
+
+[33mcommit 74a295e51fd0c54adbfe36abe721e3b5fa34941f[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Tue Jul 23 19:57:17 2024 +0200
+
+    Train Soccer Pitch Keypoint Detector notebook
+
+[33mcommit 2dff73020c565882a8474fd12d140c7a02ae1adc[m
+Merge: 05e0fac 72a211b
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Tue Jul 23 18:52:23 2024 +0200
+
+    Merge remote-tracking branch 'origin/main'
+
+[33mcommit 05e0fac6f4baddac8ef0cffe0e81349f297c3210[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Tue Jul 23 18:52:13 2024 +0200
+
+    TeamClassifier docs
+
+[33mcommit 72a211b88198ada15d31cecf0ff3e0d178aa3ba1[m
+Author: Piotr Skalski <piotr.skalski92@gmail.com>
+Date:   Tue Jul 23 18:07:29 2024 +0200
+
+    Update README.md
+
+[33mcommit d9415dbe8f64d54420cf6cd71605a20331959774[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Tue Jul 23 17:19:48 2024 +0200
+
+    TeamClassifier refactor
+
+[33mcommit 0e49abbae88a0b2097b31cddca1a745b94f90565[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Mon Jul 22 23:59:46 2024 +0200
+
+    player detection training + TeamClassifier
+
+[33mcommit a628a807ab0202afe8834574122fa3f080f5e8bf[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Mon Jul 22 23:56:49 2024 +0200
+
+    player detection training + TeamClassifier
+
+[33mcommit f092053d0d9811fe664efa61a1ff1bf0184b6795[m
+Author: Piotr Skalski <piotr.skalski92@gmail.com>
+Date:   Mon May 20 17:52:39 2024 +0200
+
+    Create LICENSE
+
+[33mcommit 44c89c4cd6430ffd0fa37a56250b3b0a2f938321[m
+Author: Piotr Skalski <piotr.skalski92@gmail.com>
+Date:   Wed May 15 11:59:50 2024 +0200
+
+    Update README.md
+
+[33mcommit 8726bff6c6b044b6fa1ceccb9723db4cb9d72cc6[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Wed May 15 08:17:59 2024 +0200
+
+    `README.md` update.
+
+[33mcommit 171a0eb899b6c83b4d20e1245d19c17f30701f32[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Tue May 14 23:56:58 2024 +0200
+
+    `draw_field_control` util added
+
+[33mcommit 45421eddba510e0935bd258b24830fc5e035a4a3[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Tue May 14 19:04:50 2024 +0200
+
+    README.md update
+
+[33mcommit 38f35c87db6c919fa9d09559f536f2eead2fe3c3[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Tue May 14 13:48:41 2024 +0200
+
+    soccer field drawing tools
+
+[33mcommit 1f61e50e47e159d8ce1207b03ad5780ff23fa052[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Tue May 14 12:32:01 2024 +0200
+
+    setuptools.find_packages
+
+[33mcommit 3de937a0e0e328b37414d4515045a4fd801f0a3d[m
+Author: SkalskiP <piotr.skalski92@gmail.com>
+Date:   Tue May 14 12:08:19 2024 +0200
+
+    initial commit ⚽

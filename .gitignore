@@ -41,6 +41,10 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+examples/soccer/data/**
+**.mp4
+**.pt
+
 # Unit test / coverage reports
 htmlcov/
 .tox/
@@ -153,3 +157,5 @@ Desktop.ini
 *~
 .directory
 .Trash-*
+
+.lightning_studio**
