@@ -4,14 +4,16 @@ from typing import List, Tuple
 
 @dataclass
 class SoccerPitchConfiguration:
-    width: int = 7000  # [cm]
-    length: int = 12000  # [cm]
-    penalty_box_width: int = 4100  # [cm]
-    penalty_box_length: int = 2015  # [cm]
-    goal_box_width: int = 1832  # [cm]
-    goal_box_length: int = 550  # [cm]
+    width: int = 3200  # [cm] 35 yd
+    length: int = 5029  # [cm] 55 yd
+    penalty_box_width: int = 2195  # [cm] 24 yd
+    penalty_box_length: int = 1097  # [cm] 12 yd
+    goal_box_width: int = 732  # [cm] 8 yd
+    goal_box_length: int = 366  # [cm] 4 yd
+    goal_width: int = 564  # [cm] 18.5 ft
+    goal_height: int = 198  # [cm] 6.5 ft
     centre_circle_radius: int = 915  # [cm]
-    penalty_spot_distance: int = 1100  # [cm]
+    penalty_spot_distance: int = 914  # [cm] inferred 10 yd
 
     @property
     def vertices(self) -> List[Tuple[int, int]]:
