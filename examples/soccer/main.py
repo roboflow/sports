@@ -340,6 +340,8 @@ def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
 
     frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
     tracker = sv.ByteTrack(minimum_consecutive_frames=3)
+    team_id_by_tracker_id = {}
+    
     for frame in frame_generator:
         result = pitch_detection_model(frame, verbose=False)[0]
         keypoints = sv.KeyPoints.from_ultralytics(result)
@@ -348,8 +350,20 @@ def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
         detections = tracker.update_with_detections(detections)
 
         players = detections[detections.class_id == PLAYER_CLASS_ID]
-        crops = get_crops(frame, players)
-        players_team_id = team_classifier.predict(crops)
+
+        unseen_mask = np.array([
+            tid not in team_id_by_tracker_id for tid in players.tracker_id
+        ])
+        if unseen_mask.any():
+            unseen_players = players[unseen_mask]
+            unseen_crops = get_crops(frame, unseen_players)
+            unseen_team_id = team_classifier.predict(unseen_crops)
+            for tid, team_id in zip(unseen_players.tracker_id, unseen_team_id):
+                team_id_by_tracker_id[tid] = int(team_id)
+
+        players_team_id = np.array([
+            team_id_by_tracker_id[tid] for tid in players.tracker_id
+        ])
 
         goalkeepers = detections[detections.class_id == GOALKEEPER_CLASS_ID]
         goalkeepers_team_id = resolve_goalkeepers_team_id(
