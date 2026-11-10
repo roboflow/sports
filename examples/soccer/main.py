@@ -341,7 +341,9 @@ def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
     frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
     tracker = sv.ByteTrack(minimum_consecutive_frames=3)
     team_id_by_tracker_id = {}
-    
+    team_id_votes = {}
+    CONFIRM_FRAMES = 5
+
     for frame in frame_generator:
         result = pitch_detection_model(frame, verbose=False)[0]
         keypoints = sv.KeyPoints.from_ultralytics(result)
@@ -351,19 +353,27 @@ def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
 
         players = detections[detections.class_id == PLAYER_CLASS_ID]
 
-        unseen_mask = np.array([
-            tid not in team_id_by_tracker_id for tid in players.tracker_id
-        ])
-        if unseen_mask.any():
-            unseen_players = players[unseen_mask]
-            unseen_crops = get_crops(frame, unseen_players)
-            unseen_team_id = team_classifier.predict(unseen_crops)
-            for tid, team_id in zip(unseen_players.tracker_id, unseen_team_id):
-                team_id_by_tracker_id[tid] = int(team_id)
+        confirmed_mask = np.array([
+            tid in team_id_by_tracker_id for tid in players.tracker_id
+        ], dtype=bool)
+        pending_players = players[~confirmed_mask]
 
-        players_team_id = np.array([
-            team_id_by_tracker_id[tid] for tid in players.tracker_id
-        ])
+        pending_team_id = np.array([], dtype=int)
+        if len(pending_players) > 0:
+            pending_crops = get_crops(frame, pending_players)
+            pending_team_id = team_classifier.predict(pending_crops)
+            for tid, team_id in zip(pending_players.tracker_id, pending_team_id):
+                votes = team_id_votes.setdefault(tid, [])
+                votes.append(int(team_id))
+                if len(votes) >= CONFIRM_FRAMES:
+                    team_id_by_tracker_id[tid] = max(set(votes), key=votes.count)
+                    del team_id_votes[tid]
+
+        players_team_id = np.empty(len(players), dtype=int)
+        players_team_id[confirmed_mask] = [
+            team_id_by_tracker_id[tid] for tid in players.tracker_id[confirmed_mask]
+        ]
+        players_team_id[~confirmed_mask] = pending_team_id
 
         goalkeepers = detections[detections.class_id == GOALKEEPER_CLASS_ID]
         goalkeepers_team_id = resolve_goalkeepers_team_id(
