@@ -118,15 +118,36 @@ def resolve_goalkeepers_team_id(
     calculating the distance between each goalkeeper and the centroids of the two teams.
     """
     goalkeepers_xy = goalkeepers.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
+    if len(goalkeepers_xy) == 0:
+        return np.array([], dtype=int)
+
     players_xy = players.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
-    team_0_centroid = players_xy[players_team_id == 0].mean(axis=0)
-    team_1_centroid = players_xy[players_team_id == 1].mean(axis=0)
+    if len(players_xy) == 0 or len(players_team_id) == 0:
+        return np.zeros(len(goalkeepers_xy), dtype=int)
+
+    team_0_mask = players_team_id == 0
+    team_1_mask = players_team_id == 1
+    if not np.any(team_0_mask) and not np.any(team_1_mask):
+        return np.zeros(len(goalkeepers_xy), dtype=int)
+    if not np.any(team_0_mask):
+        return np.ones(len(goalkeepers_xy), dtype=int)
+    if not np.any(team_1_mask):
+        return np.zeros(len(goalkeepers_xy), dtype=int)
+
+    team_0_centroid = players_xy[team_0_mask].mean(axis=0)
+    team_1_centroid = players_xy[team_1_mask].mean(axis=0)
     goalkeepers_team_id = []
     for goalkeeper_xy in goalkeepers_xy:
         dist_0 = np.linalg.norm(goalkeeper_xy - team_0_centroid)
         dist_1 = np.linalg.norm(goalkeeper_xy - team_1_centroid)
         goalkeepers_team_id.append(0 if dist_0 < dist_1 else 1)
-    return np.array(goalkeepers_team_id)
+    return np.array(goalkeepers_team_id, dtype=int)
+
+
+def tracker_id_labels(detections: sv.Detections) -> List[str]:
+    if detections.tracker_id is None:
+        return [''] * len(detections)
+    return [str(tracker_id) for tracker_id in detections.tracker_id]
 
 
 def render_radar(
@@ -134,15 +155,29 @@ def render_radar(
     keypoints: sv.KeyPoints,
     color_lookup: np.ndarray
 ) -> np.ndarray:
-    mask = (keypoints.xy[0][:, 0] > 1) & (keypoints.xy[0][:, 1] > 1)
+    radar = draw_pitch(config=CONFIG)
+    if len(detections) == 0:
+        return radar
+
+    xy = getattr(keypoints, "xy", None)
+    if xy is None or len(xy) == 0:
+        return radar
+
+    frame_keypoints = np.asarray(xy[0])
+    if frame_keypoints.ndim != 2 or frame_keypoints.shape[1] < 2:
+        return radar
+
+    mask = (frame_keypoints[:, 0] > 1) & (frame_keypoints[:, 1] > 1)
+    if np.count_nonzero(mask) < 4:
+        return radar
+
     transformer = ViewTransformer(
-        source=keypoints.xy[0][mask].astype(np.float32),
+        source=frame_keypoints[mask].astype(np.float32),
         target=np.array(CONFIG.vertices)[mask].astype(np.float32)
     )
-    xy = detections.get_anchors_coordinates(anchor=sv.Position.BOTTOM_CENTER)
-    transformed_xy = transformer.transform_points(points=xy)
+    anchor_xy = detections.get_anchors_coordinates(anchor=sv.Position.BOTTOM_CENTER)
+    transformed_xy = transformer.transform_points(points=anchor_xy)
 
-    radar = draw_pitch(config=CONFIG)
     radar = draw_points_on_pitch(
         config=CONFIG, xy=transformed_xy[color_lookup == 0],
         face_color=sv.Color.from_hex(COLORS[0]), radius=20, pitch=radar)
@@ -257,7 +292,7 @@ def run_player_tracking(source_video_path: str, device: str) -> Iterator[np.ndar
         detections = sv.Detections.from_ultralytics(result)
         detections = tracker.update_with_detections(detections)
 
-        labels = [str(tracker_id) for tracker_id in detections.tracker_id]
+        labels = tracker_id_labels(detections)
 
         annotated_frame = frame.copy()
         annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, detections)
@@ -313,7 +348,11 @@ def run_team_classification(source_video_path: str, device: str) -> Iterator[np.
                 goalkeepers_team_id.tolist() +
                 [REFEREE_CLASS_ID] * len(referees)
         )
-        labels = [str(tracker_id) for tracker_id in detections.tracker_id]
+        labels = (
+            tracker_id_labels(players) +
+            tracker_id_labels(goalkeepers) +
+            tracker_id_labels(referees)
+        )
 
         annotated_frame = frame.copy()
         annotated_frame = ELLIPSE_ANNOTATOR.annotate(
@@ -363,7 +402,11 @@ def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
             goalkeepers_team_id.tolist() +
             [REFEREE_CLASS_ID] * len(referees)
         )
-        labels = [str(tracker_id) for tracker_id in detections.tracker_id]
+        labels = (
+            tracker_id_labels(players) +
+            tracker_id_labels(goalkeepers) +
+            tracker_id_labels(referees)
+        )
 
         annotated_frame = frame.copy()
         annotated_frame = ELLIPSE_ANNOTATOR.annotate(

@@ -153,3 +153,6 @@ Desktop.ini
 *~
 .directory
 .Trash-*
+
+# Local soccer demo assets
+examples/soccer/data/
