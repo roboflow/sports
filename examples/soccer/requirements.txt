@@ -1,2 +1,5 @@
 ultralytics
 gdown
+trackers>=2.4.0
+# Optional: only needed for --player-detector inference / --pitch-detector inference
+inference

@@ -1,0 +1,4 @@
+# On-disk cache for per-frame detections and pitch keypoints.
+# These are regenerated from the source clip and must never be committed.
+*
+!.gitignore

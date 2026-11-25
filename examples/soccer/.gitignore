@@ -1,0 +1,3 @@
+# Downloaded demo clips and rendered analytics outputs (regenerated locally).
+data/*.mp4
+data/renders/
