@@ -373,7 +373,10 @@ def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
         players_team_id[confirmed_mask] = [
             team_id_by_tracker_id[tid] for tid in players.tracker_id[confirmed_mask]
         ]
-        players_team_id[~confirmed_mask] = pending_team_id
+        players_team_id[~confirmed_mask] = [
+            team_id_by_tracker_id.get(tid, int(team_id))
+            for tid, team_id in zip(pending_players.tracker_id, pending_team_id)
+        ]
 
         goalkeepers = detections[detections.class_id == GOALKEEPER_CLASS_ID]
         goalkeepers_team_id = resolve_goalkeepers_team_id(
