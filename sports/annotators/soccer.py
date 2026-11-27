@@ -1,8 +1,6 @@
-from typing import Optional, List
-
 import cv2
-import supervision as sv
 import numpy as np
+import supervision as sv
 
 from sports.configs.soccer import SoccerPitchConfiguration
 
@@ -14,7 +12,7 @@ def draw_pitch(
     padding: int = 50,
     line_thickness: int = 4,
     point_radius: int = 8,
-    scale: float = 0.1
+    scale: float = 0.1,
 ) -> np.ndarray:
     """
     Draws a soccer pitch with specified dimensions, colors, and scale.
@@ -44,45 +42,41 @@ def draw_pitch(
     scaled_penalty_spot_distance = int(config.penalty_spot_distance * scale)
 
     pitch_image = np.ones(
-        (scaled_width + 2 * padding,
-         scaled_length + 2 * padding, 3),
-        dtype=np.uint8
+        (scaled_width + 2 * padding, scaled_length + 2 * padding, 3), dtype=np.uint8
     ) * np.array(background_color.as_bgr(), dtype=np.uint8)
 
     for start, end in config.edges:
-        point1 = (int(config.vertices[start - 1][0] * scale) + padding,
-                  int(config.vertices[start - 1][1] * scale) + padding)
-        point2 = (int(config.vertices[end - 1][0] * scale) + padding,
-                  int(config.vertices[end - 1][1] * scale) + padding)
+        point1 = (
+            int(config.vertices[start - 1][0] * scale) + padding,
+            int(config.vertices[start - 1][1] * scale) + padding,
+        )
+        point2 = (
+            int(config.vertices[end - 1][0] * scale) + padding,
+            int(config.vertices[end - 1][1] * scale) + padding,
+        )
         cv2.line(
             img=pitch_image,
             pt1=point1,
             pt2=point2,
             color=line_color.as_bgr(),
-            thickness=line_thickness
+            thickness=line_thickness,
         )
 
-    centre_circle_center = (
-        scaled_length // 2 + padding,
-        scaled_width // 2 + padding
-    )
+    centre_circle_center = (scaled_length // 2 + padding, scaled_width // 2 + padding)
     cv2.circle(
         img=pitch_image,
         center=centre_circle_center,
         radius=scaled_circle_radius,
         color=line_color.as_bgr(),
-        thickness=line_thickness
+        thickness=line_thickness,
     )
 
     penalty_spots = [
-        (
-            scaled_penalty_spot_distance + padding,
-            scaled_width // 2 + padding
-        ),
+        (scaled_penalty_spot_distance + padding, scaled_width // 2 + padding),
         (
             scaled_length - scaled_penalty_spot_distance + padding,
-            scaled_width // 2 + padding
-        )
+            scaled_width // 2 + padding,
+        ),
     ]
     for spot in penalty_spots:
         cv2.circle(
@@ -90,7 +84,7 @@ def draw_pitch(
             center=spot,
             radius=point_radius,
             color=line_color.as_bgr(),
-            thickness=-1
+            thickness=-1,
         )
 
     return pitch_image
@@ -105,7 +99,7 @@ def draw_points_on_pitch(
     thickness: int = 2,
     padding: int = 50,
     scale: float = 0.1,
-    pitch: Optional[np.ndarray] = None
+    pitch: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Draws points on a soccer pitch.
@@ -134,30 +128,26 @@ def draw_points_on_pitch(
         np.ndarray: Image of the soccer pitch with points drawn on it.
     """
     if pitch is None:
-        pitch = draw_pitch(
-            config=config,
-            padding=padding,
-            scale=scale
-        )
+        pitch = draw_pitch(config=config, padding=padding, scale=scale)
 
     for point in xy:
         scaled_point = (
             int(point[0] * scale) + padding,
-            int(point[1] * scale) + padding
+            int(point[1] * scale) + padding,
         )
         cv2.circle(
             img=pitch,
             center=scaled_point,
             radius=radius,
             color=face_color.as_bgr(),
-            thickness=-1
+            thickness=-1,
         )
         cv2.circle(
             img=pitch,
             center=scaled_point,
             radius=radius,
             color=edge_color.as_bgr(),
-            thickness=thickness
+            thickness=thickness,
         )
 
     return pitch
@@ -165,12 +155,12 @@ def draw_points_on_pitch(
 
 def draw_paths_on_pitch(
     config: SoccerPitchConfiguration,
-    paths: List[np.ndarray],
+    paths: list[np.ndarray],
     color: sv.Color = sv.Color.WHITE,
     thickness: int = 2,
     padding: int = 50,
     scale: float = 0.1,
-    pitch: Optional[np.ndarray] = None
+    pitch: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Draws paths on a soccer pitch.
@@ -195,19 +185,13 @@ def draw_paths_on_pitch(
         np.ndarray: Image of the soccer pitch with paths drawn on it.
     """
     if pitch is None:
-        pitch = draw_pitch(
-            config=config,
-            padding=padding,
-            scale=scale
-        )
+        pitch = draw_pitch(config=config, padding=padding, scale=scale)
 
     for path in paths:
         scaled_path = [
-            (
-                int(point[0] * scale) + padding,
-                int(point[1] * scale) + padding
-            )
-            for point in path if point.size > 0
+            (int(point[0] * scale) + padding, int(point[1] * scale) + padding)
+            for point in path
+            if point.size > 0
         ]
 
         if len(scaled_path) < 2:
@@ -219,7 +203,7 @@ def draw_paths_on_pitch(
                 pt1=scaled_path[i],
                 pt2=scaled_path[i + 1],
                 color=color.as_bgr(),
-                thickness=thickness
+                thickness=thickness,
             )
 
     return pitch
@@ -234,7 +218,7 @@ def draw_pitch_voronoi_diagram(
     opacity: float = 0.5,
     padding: int = 50,
     scale: float = 0.1,
-    pitch: Optional[np.ndarray] = None
+    pitch: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Draws a Voronoi diagram on a soccer pitch representing the control areas of two
@@ -264,11 +248,7 @@ def draw_pitch_voronoi_diagram(
         np.ndarray: Image of the soccer pitch with the Voronoi diagram overlay.
     """
     if pitch is None:
-        pitch = draw_pitch(
-            config=config,
-            padding=padding,
-            scale=scale
-        )
+        pitch = draw_pitch(config=config, padding=padding, scale=scale)
 
     scaled_width = int(config.width * scale)
     scaled_length = int(config.length * scale)
@@ -278,17 +258,18 @@ def draw_pitch_voronoi_diagram(
     team_1_color_bgr = np.array(team_1_color.as_bgr(), dtype=np.uint8)
     team_2_color_bgr = np.array(team_2_color.as_bgr(), dtype=np.uint8)
 
-    y_coordinates, x_coordinates = np.indices((
-        scaled_width + 2 * padding,
-        scaled_length + 2 * padding
-    ))
+    y_coordinates, x_coordinates = np.indices(
+        (scaled_width + 2 * padding, scaled_length + 2 * padding)
+    )
 
     y_coordinates -= padding
     x_coordinates -= padding
 
     def calculate_distances(xy, x_coordinates, y_coordinates):
-        return np.sqrt((xy[:, 0][:, None, None] * scale - x_coordinates) ** 2 +
-                       (xy[:, 1][:, None, None] * scale - y_coordinates) ** 2)
+        return np.sqrt(
+            (xy[:, 0][:, None, None] * scale - x_coordinates) ** 2
+            + (xy[:, 1][:, None, None] * scale - y_coordinates) ** 2
+        )
 
     distances_team_1 = calculate_distances(team_1_xy, x_coordinates, y_coordinates)
     distances_team_2 = calculate_distances(team_2_xy, x_coordinates, y_coordinates)

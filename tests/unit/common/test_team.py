@@ -6,6 +6,7 @@ derived from a crop's mean colour. Everything else (UMAP, KMeans, batching,
 ordering) runs for real, so the tests check the intent: jerseys of two colours are
 split into two teams.
 """
+
 from types import SimpleNamespace
 
 import numpy as np
@@ -19,13 +20,16 @@ from sports.common.team import TeamClassifier, create_batches
 class TestCreateBatches:
     """``create_batches`` slices any iterable into consecutive lists."""
 
-    @pytest.mark.parametrize("n, batch_size, expected_sizes", [
-        pytest.param(7, 3, [3, 3, 1], id="remainder-batch"),
-        pytest.param(6, 3, [3, 3], id="exact-multiple-has-no-empty-tail"),
-        pytest.param(2, 5, [2], id="batch-larger-than-input"),
-        pytest.param(4, 1, [1, 1, 1, 1], id="batch-of-one"),
-        pytest.param(0, 3, [], id="empty-input"),
-    ])
+    @pytest.mark.parametrize(
+        "n, batch_size, expected_sizes",
+        [
+            pytest.param(7, 3, [3, 3, 1], id="remainder-batch"),
+            pytest.param(6, 3, [3, 3], id="exact-multiple-has-no-empty-tail"),
+            pytest.param(2, 5, [2], id="batch-larger-than-input"),
+            pytest.param(4, 1, [1, 1, 1, 1], id="batch-of-one"),
+            pytest.param(0, 3, [], id="empty-input"),
+        ],
+    )
     def test_batch_sizes(self, n, batch_size, expected_sizes):
         """All batches are full except possibly the last; empty input gives none."""
         batches = list(create_batches(range(n), batch_size))
@@ -52,6 +56,7 @@ class TestCreateBatches:
 # Fake Hugging Face boundary
 # ---------------------------------------------------------------------------
 
+
 class _FakeBatch(dict):
     """Mimics the processor output: a mapping with a ``.to(device)`` method."""
 
@@ -68,7 +73,9 @@ class _FakeProcessor:
 
     def __call__(self, images, return_tensors):
         means = [np.asarray(im).reshape(-1, 3).mean(axis=0) / 255.0 for im in images]
-        return _FakeBatch(pixel_values=torch.tensor(np.array(means), dtype=torch.float32))
+        return _FakeBatch(
+            pixel_values=torch.tensor(np.array(means), dtype=torch.float32)
+        )
 
 
 class _FakeVisionModel:
@@ -82,7 +89,7 @@ class _FakeVisionModel:
         return self
 
     def __call__(self, pixel_values):
-        feats = torch.cat([pixel_values, pixel_values ** 2, pixel_values.sqrt()], dim=1)
+        feats = torch.cat([pixel_values, pixel_values**2, pixel_values.sqrt()], dim=1)
         return SimpleNamespace(last_hidden_state=feats[:, None, :].repeat(1, 4, 1))
 
 
@@ -152,7 +159,10 @@ class TestTeamClassifier:
         classifier.fit(crops)
         seen_labels = classifier.predict([jersey(RED_SHIRT), jersey(BLUE_SHIRT)])
         unseen_labels = classifier.predict(unseen)
-        assert seen_labels.tolist() == unseen_labels.tolist() and seen_labels[0] != seen_labels[1]
+        assert (
+            seen_labels.tolist() == unseen_labels.tolist()
+            and seen_labels[0] != seen_labels[1]
+        )
 
     def test_predict_on_no_crops_returns_empty_array(self, crops):
         """A frame with no players yields an empty prediction, not an error."""
