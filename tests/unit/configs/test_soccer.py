@@ -3,6 +3,7 @@
 Expectations come from the geometry of a soccer pitch and the documented meaning
 of each field, never from the literal numbers inside the implementation.
 """
+
 import re
 
 import numpy as np
@@ -11,14 +12,16 @@ import pytest
 from sports.configs.soccer import SoccerPitchConfiguration
 
 
-@pytest.fixture(params=[
-    pytest.param({}, id="default"),
-    pytest.param({"width": 6400, "length": 10500}, id="small-pitch"),
-    pytest.param(
-        {"width": 7500, "length": 12000, "centre_circle_radius": 1000},
-        id="wide-pitch-big-circle",
-    ),
-])
+@pytest.fixture(
+    params=[
+        pytest.param({}, id="default"),
+        pytest.param({"width": 6400, "length": 10500}, id="small-pitch"),
+        pytest.param(
+            {"width": 7500, "length": 12000, "centre_circle_radius": 1000},
+            id="wide-pitch-big-circle",
+        ),
+    ]
+)
 def config(request) -> SoccerPitchConfiguration:
     """Default configuration plus two custom pitch sizes."""
     return SoccerPitchConfiguration(**request.param)
@@ -37,7 +40,9 @@ class TestKeypointMetadata:
         A length mismatch would make annotators drop or misattribute keypoints.
         """
         assert (len(config.vertices), len(config.labels), len(config.colors)) == (
-            32, 32, 32
+            32,
+            32,
+            32,
         )
 
     def test_labels_are_unique(self, config):
@@ -66,15 +71,20 @@ class TestVertexGeometry:
     def test_four_pitch_corners_are_keypoints(self, config):
         """Corners are the most reliable landmarks and must be present."""
         corners = {
-            (0.0, 0.0), (0.0, float(config.width)),
-            (float(config.length), 0.0), (float(config.length), float(config.width)),
+            (0.0, 0.0),
+            (0.0, float(config.width)),
+            (float(config.length), 0.0),
+            (float(config.length), float(config.width)),
         }
         assert corners <= _vertex_set(config)
 
-    @pytest.mark.parametrize("axis", [
-        pytest.param(0, id="halfway-line-mirror"),
-        pytest.param(1, id="long-axis-mirror"),
-    ])
+    @pytest.mark.parametrize(
+        "axis",
+        [
+            pytest.param(0, id="halfway-line-mirror"),
+            pytest.param(1, id="long-axis-mirror"),
+        ],
+    )
     def test_pitch_is_mirror_symmetric(self, config, axis):
         """Reflecting the keypoints across the halfway line or long axis maps onto itself.
 
@@ -98,10 +108,16 @@ class TestVertexGeometry:
 
     def test_centre_circle_meets_halfway_line_and_long_axis(self, config):
         """The centre circle touches the halfway line and long axis at +-radius."""
-        mid, centre_y, r = config.length / 2, config.width / 2, config.centre_circle_radius
+        mid, centre_y, r = (
+            config.length / 2,
+            config.width / 2,
+            config.centre_circle_radius,
+        )
         expected = {
-            (mid, centre_y - r), (mid, centre_y + r),
-            (mid - r, centre_y), (mid + r, centre_y),
+            (mid, centre_y - r),
+            (mid, centre_y + r),
+            (mid - r, centre_y),
+            (mid + r, centre_y),
         }
         assert expected <= _vertex_set(config)
 
@@ -149,9 +165,8 @@ class TestEdges:
     def test_edges_have_no_self_loops_or_duplicates(self, config):
         """A pitch line joins two different points and is listed once."""
         undirected = {frozenset(edge) for edge in config.edges}
-        assert (
-            all(a != b for a, b in config.edges)
-            and len(undirected) == len(config.edges)
+        assert all(a != b for a, b in config.edges) and len(undirected) == len(
+            config.edges
         )
 
     def test_every_edge_is_horizontal_or_vertical(self, config):
@@ -174,11 +189,22 @@ class TestEdges:
     def test_pitch_outline_is_closed(self, config):
         """Touch lines and goal lines form a closed loop around the pitch."""
         outline = {
-            frozenset(e) for e in [
-                (1, 2), (2, 3), (3, 4), (4, 5), (5, 6),  # left goal line
-                (6, 17), (17, 30),  # bottom touch line
-                (30, 29), (29, 28), (28, 27), (27, 26), (26, 25),  # right goal line
-                (25, 14), (14, 1),  # top touch line
+            frozenset(e)
+            for e in [
+                (1, 2),
+                (2, 3),
+                (3, 4),
+                (4, 5),
+                (5, 6),  # left goal line
+                (6, 17),
+                (17, 30),  # bottom touch line
+                (30, 29),
+                (29, 28),
+                (28, 27),
+                (27, 26),
+                (26, 25),  # right goal line
+                (25, 14),
+                (14, 1),  # top touch line
             ]
         }
         assert outline <= {frozenset(edge) for edge in config.edges}

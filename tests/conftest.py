@@ -1,4 +1,5 @@
 """Shared pytest fixtures for the whole test tree."""
+
 import random
 
 import numpy as np

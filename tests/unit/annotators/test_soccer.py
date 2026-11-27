@@ -4,6 +4,7 @@ Pixel positions are derived from physical pitch size (cm), ``scale`` (px per cm)
 ``padding`` (px), so a test only trusts the documented geometry, never golden images.
 Colours are ``sv.Color(r, g, b)``; OpenCV images are BGR.
 """
+
 import numpy as np
 import pytest
 import supervision as sv
@@ -42,11 +43,14 @@ def colour_at(image: np.ndarray, x: int, y: int) -> tuple:
 class TestDrawPitch:
     """``draw_pitch`` renders the pitch markings on a coloured background."""
 
-    @pytest.mark.parametrize("scale, padding", [
-        pytest.param(0.1, 50, id="defaults"),
-        pytest.param(0.05, 20, id="half-scale-small-padding"),
-        pytest.param(0.2, 0, id="double-scale-no-padding"),
-    ])
+    @pytest.mark.parametrize(
+        "scale, padding",
+        [
+            pytest.param(0.1, 50, id="defaults"),
+            pytest.param(0.05, 20, id="half-scale-small-padding"),
+            pytest.param(0.2, 0, id="double-scale-no-padding"),
+        ],
+    )
     def test_image_size_follows_pitch_scale_and_padding(self, config, scale, padding):
         """Height = width*scale + 2*padding, width = length*scale + 2*padding, 3 channels."""
         image = draw_pitch(config, scale=scale, padding=padding)
@@ -72,16 +76,19 @@ class TestDrawPitch:
         """Without a colour argument the margin is grass green (34, 139, 34 RGB)."""
         assert colour_at(draw_pitch(config), 0, 0) == BGR_DEFAULT_GRASS
 
-    @pytest.mark.parametrize("x_cm, y_cm", [
-        pytest.param(0, 0, id="top-left-corner"),
-        pytest.param(12000, 7000, id="bottom-right-corner"),
-        pytest.param(6000, 0, id="middle-of-top-touch-line"),
-        pytest.param(6000, 3500, id="middle-of-halfway-line"),
-        pytest.param(0, 3500, id="middle-of-left-goal-line"),
-        pytest.param(1100, 3500, id="left-penalty-spot"),
-        pytest.param(12000 - 1100, 3500, id="right-penalty-spot"),
-        pytest.param(6000 + 915, 3500, id="centre-circle-right-point"),
-    ])
+    @pytest.mark.parametrize(
+        "x_cm, y_cm",
+        [
+            pytest.param(0, 0, id="top-left-corner"),
+            pytest.param(12000, 7000, id="bottom-right-corner"),
+            pytest.param(6000, 0, id="middle-of-top-touch-line"),
+            pytest.param(6000, 3500, id="middle-of-halfway-line"),
+            pytest.param(0, 3500, id="middle-of-left-goal-line"),
+            pytest.param(1100, 3500, id="left-penalty-spot"),
+            pytest.param(12000 - 1100, 3500, id="right-penalty-spot"),
+            pytest.param(6000 + 915, 3500, id="centre-circle-right-point"),
+        ],
+    )
     def test_pitch_markings_are_drawn_in_line_colour(self, config, x_cm, y_cm):
         """Corners, touch/goal/halfway lines, spots and the centre circle are drawn.
 
@@ -90,11 +97,14 @@ class TestDrawPitch:
         x, y = px(x_cm, y_cm)
         assert colour_at(draw_pitch(config), x, y) == BGR_WHITE
 
-    @pytest.mark.parametrize("x_cm, y_cm", [
-        pytest.param(3000, 1000, id="open-grass-left-of-centre"),
-        pytest.param(9000, 6000, id="open-grass-right-of-centre"),
-        pytest.param(6000 + 400, 3500 - 400, id="inside-centre-circle"),
-    ])
+    @pytest.mark.parametrize(
+        "x_cm, y_cm",
+        [
+            pytest.param(3000, 1000, id="open-grass-left-of-centre"),
+            pytest.param(9000, 6000, id="open-grass-right-of-centre"),
+            pytest.param(6000 + 400, 3500 - 400, id="inside-centre-circle"),
+        ],
+    )
     def test_open_grass_is_left_as_background(self, config, x_cm, y_cm):
         """Areas that hold no marking keep the background colour."""
         x, y = px(x_cm, y_cm)
@@ -106,7 +116,10 @@ class TestDrawPitch:
             config, background_color=sv.Color.BLUE, line_color=sv.Color.RED
         )
         x, y = px(0, 0)
-        assert (colour_at(image, 0, 0), colour_at(image, x, y)) == (BGR_RED[::-1], BGR_RED)
+        assert (colour_at(image, 0, 0), colour_at(image, x, y)) == (
+            BGR_RED[::-1],
+            BGR_RED,
+        )
 
     def test_thicker_lines_cover_more_pixels(self, config):
         """``line_thickness`` widens the markings."""
@@ -125,12 +138,15 @@ class TestDrawPitch:
 class TestDrawPointsOnPitch:
     """``draw_points_on_pitch`` marks pitch positions (cm) on the image."""
 
-    @pytest.mark.parametrize("x_cm, y_cm, scale", [
-        pytest.param(6000, 3500, 0.1, id="centre-default-scale"),
-        pytest.param(0, 0, 0.1, id="origin"),
-        pytest.param(12000, 7000, 0.1, id="far-corner"),
-        pytest.param(6000, 3500, 0.05, id="centre-half-scale"),
-    ])
+    @pytest.mark.parametrize(
+        "x_cm, y_cm, scale",
+        [
+            pytest.param(6000, 3500, 0.1, id="centre-default-scale"),
+            pytest.param(0, 0, 0.1, id="origin"),
+            pytest.param(12000, 7000, 0.1, id="far-corner"),
+            pytest.param(6000, 3500, 0.05, id="centre-half-scale"),
+        ],
+    )
     def test_point_is_filled_with_face_colour_at_its_scaled_position(
         self, config, x_cm, y_cm, scale
     ):
@@ -147,7 +163,7 @@ class TestDrawPointsOnPitch:
             config, np.array([[6000, 3500]]), edge_color=sv.Color.BLUE, radius=10
         )
         x, y = px(6000, 3500)
-        ring = result[y, x + 8:x + 13]
+        ring = result[y, x + 8 : x + 13]
         assert (ring == BGR_BLUE).all(axis=1).any()
 
     def test_every_point_is_drawn(self, config):
@@ -169,7 +185,9 @@ class TestDrawPointsOnPitch:
             config, np.array([[0, 0]]), face_color=sv.Color.RED, pitch=canvas
         )
         assert (result.shape, colour_at(result, 0, 0), colour_at(result, 50, 50)) == (
-            (100, 100, 3), (7, 7, 7), BGR_RED
+            (100, 100, 3),
+            (7, 7, 7),
+            BGR_RED,
         )
 
 
@@ -186,7 +204,8 @@ class TestDrawPathsOnPitch:
         result = draw_paths_on_pitch(config, [corner_path], color=sv.Color.RED)
         first_mid, second_mid = px(2000, 1000), px(3000, 2000)
         assert (colour_at(result, *first_mid), colour_at(result, *second_mid)) == (
-            BGR_RED, BGR_RED
+            BGR_RED,
+            BGR_RED,
         )
 
     def test_path_colour_is_not_applied_off_the_path(self, config, corner_path):
@@ -201,18 +220,19 @@ class TestDrawPathsOnPitch:
         team member's trajectory vanishing is the failure this guards.
         """
         second = np.array([[8000, 5000], [10000, 5000]])
-        result = draw_paths_on_pitch(
-            config, [corner_path, second], color=sv.Color.RED
-        )
+        result = draw_paths_on_pitch(config, [corner_path, second], color=sv.Color.RED)
         assert (
             colour_at(result, *px(2000, 1000)),
             colour_at(result, *px(9000, 5000)),
         ) == (BGR_RED, BGR_RED)
 
-    @pytest.mark.parametrize("paths", [
-        pytest.param([], id="no-paths"),
-        pytest.param([np.array([[1000, 1000]])], id="single-point-path"),
-    ])
+    @pytest.mark.parametrize(
+        "paths",
+        [
+            pytest.param([], id="no-paths"),
+            pytest.param([np.array([[1000, 1000]])], id="single-point-path"),
+        ],
+    )
     def test_returns_the_plain_pitch_when_nothing_is_drawable(self, config, paths):
         """A pitch image is always returned, even if there is nothing to draw."""
         result = draw_paths_on_pitch(config, paths)
@@ -234,13 +254,16 @@ class TestDrawPitchVoronoiDiagram:
         """Team 2 player at (9000, 3500) cm."""
         return np.array([[9000, 3500]])
 
-    @pytest.mark.parametrize("x_px, y_px, expected", [
-        pytest.param(150, 100, BGR_RED, id="near-team-1"),
-        pytest.param(1100, 700, BGR_BLUE, id="near-team-2"),
-        pytest.param(0, 0, BGR_RED, id="padding-corner-nearest-to-team-1"),
-        pytest.param(640, 400, BGR_RED, id="just-left-of-bisector"),
-        pytest.param(660, 400, BGR_BLUE, id="just-right-of-bisector"),
-    ])
+    @pytest.mark.parametrize(
+        "x_px, y_px, expected",
+        [
+            pytest.param(150, 100, BGR_RED, id="near-team-1"),
+            pytest.param(1100, 700, BGR_BLUE, id="near-team-2"),
+            pytest.param(0, 0, BGR_RED, id="padding-corner-nearest-to-team-1"),
+            pytest.param(640, 400, BGR_RED, id="just-left-of-bisector"),
+            pytest.param(660, 400, BGR_BLUE, id="just-right-of-bisector"),
+        ],
+    )
     def test_pixel_takes_the_colour_of_the_nearest_team(
         self, config, left_player, right_player, x_px, y_px, expected
     ):
@@ -250,8 +273,12 @@ class TestDrawPitchVoronoiDiagram:
         pixel 650 with default padding and scale.
         """
         result = draw_pitch_voronoi_diagram(
-            config, left_player, right_player,
-            team_1_color=sv.Color.RED, team_2_color=sv.Color.BLUE, opacity=1.0,
+            config,
+            left_player,
+            right_player,
+            team_1_color=sv.Color.RED,
+            team_2_color=sv.Color.BLUE,
+            opacity=1.0,
         )
         assert colour_at(result, x_px, y_px) == expected
 
@@ -264,14 +291,21 @@ class TestDrawPitchVoronoiDiagram:
         team_1 = np.array([[1000, 3500], [11000, 3500]])
         team_2 = np.array([[6000, 3500]])
         result = draw_pitch_voronoi_diagram(
-            config, team_1, team_2,
-            team_1_color=sv.Color.RED, team_2_color=sv.Color.BLUE, opacity=1.0,
+            config,
+            team_1,
+            team_2,
+            team_1_color=sv.Color.RED,
+            team_2_color=sv.Color.BLUE,
+            opacity=1.0,
         )
-        assert (colour_at(result, *px(11500, 3500)), colour_at(result, *px(6000, 3500))) == (
-            BGR_RED, BGR_BLUE
-        )
+        assert (
+            colour_at(result, *px(11500, 3500)),
+            colour_at(result, *px(6000, 3500)),
+        ) == (BGR_RED, BGR_BLUE)
 
-    def test_zero_opacity_returns_the_plain_pitch(self, config, left_player, right_player):
+    def test_zero_opacity_returns_the_plain_pitch(
+        self, config, left_player, right_player
+    ):
         """With opacity 0 the overlay is invisible."""
         result = draw_pitch_voronoi_diagram(
             config, left_player, right_player, opacity=0.0
@@ -288,7 +322,9 @@ class TestDrawPitchVoronoiDiagram:
         expected = 0.5 * np.array(BGR_RED) + 0.5 * np.array(BGR_DEFAULT_GRASS)
         np.testing.assert_allclose(result[100, 150], expected, atol=1.0)
 
-    def test_output_has_the_same_size_as_the_pitch(self, config, left_player, right_player):
+    def test_output_has_the_same_size_as_the_pitch(
+        self, config, left_player, right_player
+    ):
         """The overlay result is a full pitch-sized uint8 image."""
         result = draw_pitch_voronoi_diagram(config, left_player, right_player)
         assert (result.shape, result.dtype) == (draw_pitch(config).shape, np.uint8)

@@ -3,6 +3,7 @@
 Expectations follow the documented intent: the tracker keeps the one detection
 nearest to the recent trajectory; the annotator draws a fading trail of circles.
 """
+
 import numpy as np
 import pytest
 import supervision as sv
@@ -49,9 +50,7 @@ class TestBallTracker:
         tracker = BallTracker()
         for _ in range(3):
             tracker.update(ball_at((100, 100)))
-        result = tracker.update(
-            ball_at((500, 400), (103, 100), confidence=(0.9, 0.3))
-        )
+        result = tracker.update(ball_at((500, 400), (103, 100), confidence=(0.9, 0.3)))
         np.testing.assert_allclose(result.confidence, [0.3])
 
     def test_single_detection_is_returned_as_is(self):
@@ -93,11 +92,14 @@ class TestBallTracker:
 class TestBallAnnotatorRadius:
     """The trail radius grows from 1 (oldest) to ``radius`` (newest)."""
 
-    @pytest.mark.parametrize("i, max_i, expected", [
-        pytest.param(0, 5, 1, id="oldest-is-1"),
-        pytest.param(4, 5, 10, id="newest-is-max-radius"),
-        pytest.param(0, 1, 10, id="single-entry-is-max-radius"),
-    ])
+    @pytest.mark.parametrize(
+        "i, max_i, expected",
+        [
+            pytest.param(0, 5, 1, id="oldest-is-1"),
+            pytest.param(4, 5, 10, id="newest-is-max-radius"),
+            pytest.param(0, 1, 10, id="single-entry-is-max-radius"),
+        ],
+    )
     def test_endpoints_of_the_interpolation(self, i, max_i, expected):
         """Oldest trail entry has radius 1, newest has the configured radius."""
         assert BallAnnotator(radius=10).interpolate_radius(i, max_i) == expected
