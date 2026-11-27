@@ -44,7 +44,9 @@ PLAYER_AT_CENTRE_SPOT = sv.Detections(xyxy=np.array([[595.0, 330.0, 605.0, 350.0
 class TestHideLowConfidenceKeypoints:
     def test_zeroes_only_keypoints_below_threshold(self, main):
         keypoints = make_keypoints(
-            [[10, 20], [30, 40], [50, 60]], [0.9, 0.2, main.KEYPOINT_CONFIDENCE_THRESHOLD])
+            [[10, 20], [30, 40], [50, 60]],
+            [0.9, 0.2, main.KEYPOINT_CONFIDENCE_THRESHOLD],
+        )
 
         result = main.hide_low_confidence_keypoints(keypoints)
 
@@ -63,7 +65,8 @@ class TestRenderRadar:
     def test_projects_players_with_confident_keypoints_only(self, main):
         # Halfway line and centre circle, which is all a centre camera might show.
         keypoints = main.hide_low_confidence_keypoints(
-            pitch_keypoints_in_view(main, [13, 14, 15, 16, 30, 31]))
+            pitch_keypoints_in_view(main, [13, 14, 15, 16, 30, 31])
+        )
 
         radar = main.render_radar(PLAYER_AT_CENTRE_SPOT, keypoints, np.array([0]))
 
@@ -79,7 +82,9 @@ class TestRenderRadar:
         ],
     )
     def test_returns_empty_pitch_when_view_cannot_be_mapped(self, main, visible_ids):
-        keypoints = main.hide_low_confidence_keypoints(pitch_keypoints_in_view(main, visible_ids))
+        keypoints = main.hide_low_confidence_keypoints(
+            pitch_keypoints_in_view(main, visible_ids)
+        )
 
         radar = main.render_radar(PLAYER_AT_CENTRE_SPOT, keypoints, np.array([0]))
 
@@ -88,7 +93,9 @@ class TestRenderRadar:
     def test_returns_empty_pitch_for_collinear_keypoints(self, main):
         """Return an empty pitch when four visible points cannot define a homography."""
         visible_ids = [13, 14, 15, 16]
-        keypoints = main.hide_low_confidence_keypoints(pitch_keypoints_in_view(main, visible_ids))
+        keypoints = main.hide_low_confidence_keypoints(
+            pitch_keypoints_in_view(main, visible_ids)
+        )
         keypoints.xy[0, visible_ids] += 10
         mask = (keypoints.xy[0, :, 0] > 1) & (keypoints.xy[0, :, 1] > 1)
         assert np.count_nonzero(mask) == 4
