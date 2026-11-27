@@ -18,7 +18,7 @@ class BallAnnotator:
 
     def __init__(self, radius: int, buffer_size: int = 5, thickness: int = 2):
 
-        self.color_palette = sv.ColorPalette.from_matplotlib('jet', buffer_size)
+        self.color_palette = sv.ColorPalette.from_matplotlib("jet", buffer_size)
         self.buffer = deque(maxlen=buffer_size)
         self.radius = radius
         self.thickness = thickness
@@ -60,7 +60,7 @@ class BallAnnotator:
                     center=tuple(center),
                     radius=interpolated_radius,
                     color=color.as_bgr(),
-                    thickness=self.thickness
+                    thickness=self.thickness,
                 )
         return frame
 
@@ -76,6 +76,7 @@ class BallTracker:
     Attributes:
         buffer (collections.deque): A deque buffer to store recent ball positions.
     """
+
     def __init__(self, buffer_size: int = 10):
         self.buffer = deque(maxlen=buffer_size)
 
