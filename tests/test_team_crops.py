@@ -120,8 +120,8 @@ def test_crop_filter_preserves_player_alignment():
     print("valid, mixed and all-empty crop checks passed in both soccer modes")
 
 
-def test_missing_team_centroid_omits_goalkeepers():
-    """Avoid assigning a goalkeeper when a team centroid is unavailable."""
+def test_resolver_returns_empty_for_no_goalkeepers():
+    """Return no team IDs when no goalkeepers remain."""
     root = Path(__file__).resolve().parents[1]
     source = root / "examples/soccer/main.py"
     tree = ast.parse(source.read_text())
@@ -145,6 +145,25 @@ def test_missing_team_centroid_omits_goalkeepers():
         ),
         environment,
     )
+    assert (
+        environment["resolve_goalkeepers_team_id"]([], np.array([0]), []).tolist() == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        pytest.param([], [], id="no-teams"),
+        pytest.param([0], [], id="team-zero-only"),
+        pytest.param([1], [], id="team-one-only"),
+        pytest.param([0, 1], [42], id="both-teams"),
+    ],
+)
+def test_goalkeeper_guard_depends_on_available_teams(labels, expected):
+    """Keep goalkeepers only when both team centroids are available."""
+    root = Path(__file__).resolve().parents[1]
+    source = root / "examples/soccer/main.py"
+    tree = ast.parse(source.read_text())
     for name in ("run_team_classification", "run_radar"):
         function = next(
             node
@@ -159,26 +178,10 @@ def test_missing_team_centroid_omits_goalkeepers():
             and "goalkeepers" in ast.unparse(node)
         )
         module = ast.Module(body=[guard], type_ignores=[])
-        for labels in (np.array([]), np.array([0]), np.array([1])):
-            context = {
-                "np": np,
-                "players_team_id": labels,
-                "goalkeepers": np.array([42]),
-            }
-            exec(  # noqa: S102
-                compile(module, str(source), "exec"), context
-            )
-            assert context["goalkeepers"].tolist() == []
-            assert (
-                environment["resolve_goalkeepers_team_id"](
-                    [], labels, context["goalkeepers"]
-                ).tolist()
-                == []
-            )
         context = {
             "np": np,
-            "players_team_id": np.array([0, 1]),
+            "players_team_id": np.array(labels),
             "goalkeepers": np.array([42]),
         }
         exec(compile(module, str(source), "exec"), context)  # noqa: S102
-        assert context["goalkeepers"].tolist() == [42]
+        assert context["goalkeepers"].tolist() == expected
