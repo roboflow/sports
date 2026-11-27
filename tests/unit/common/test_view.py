@@ -3,6 +3,7 @@
 Expected values come from an independent numpy projective-geometry oracle and from
 algebraic properties (identity, translation, scale, round trip), not from OpenCV.
 """
+
 import numpy as np
 import pytest
 
@@ -12,9 +13,7 @@ from sports.configs.soccer import SoccerPitchConfiguration
 # float32 coordinates up to ~1e3 px carry ~1e-4 px of rounding error.
 POINT_ATOL = 0.05
 
-FRAME_CORNERS = np.array(
-    [[0, 0], [640, 0], [640, 360], [0, 360]], dtype=np.float32
-)
+FRAME_CORNERS = np.array([[0, 0], [640, 0], [640, 360], [0, 360]], dtype=np.float32)
 
 
 def project(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
@@ -26,11 +25,13 @@ def project(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
 @pytest.fixture
 def homography() -> np.ndarray:
     """A hand-chosen perspective matrix (rotation/shear, shift and perspective)."""
-    return np.array([
-        [1.2, 0.1, 30.0],
-        [-0.05, 0.9, 12.0],
-        [0.0004, 0.0002, 1.0],
-    ])
+    return np.array(
+        [
+            [1.2, 0.1, 30.0],
+            [-0.05, 0.9, 12.0],
+            [0.0004, 0.0002, 1.0],
+        ]
+    )
 
 
 @pytest.fixture
@@ -75,7 +76,8 @@ class TestConstruction:
         corners = FRAME_CORNERS.astype(np.int32)
         transformer = ViewTransformer(corners, corners)
         np.testing.assert_allclose(
-            transformer.transform_points(np.array([[10, 20]])), [[10, 20]],
+            transformer.transform_points(np.array([[10, 20]])),
+            [[10, 20]],
             atol=POINT_ATOL,
         )
 
@@ -119,10 +121,10 @@ class TestTransformPoints:
 
     def test_translation_correspondences_shift_points(self):
         """Target = source + (15, -7) shifts every point by the same offset."""
-        transformer = ViewTransformer(FRAME_CORNERS, FRAME_CORNERS + [15, -7])
+        transformer = ViewTransformer(FRAME_CORNERS, [*FRAME_CORNERS, 15, -7])
         points = np.array([[5, 6], [300, 200]], dtype=np.float32)
         np.testing.assert_allclose(
-            transformer.transform_points(points), points + [15, -7], atol=POINT_ATOL
+            transformer.transform_points(points), [*points, 15, -7], atol=POINT_ATOL
         )
 
     def test_large_offset_translation_preserves_invertible_mapping(self):
@@ -134,7 +136,10 @@ class TestTransformPoints:
 
         # The inputs and expected outputs are exactly representable in float32.
         np.testing.assert_allclose(
-            transformer.transform_points(points), points + offset, rtol=0, atol=POINT_ATOL
+            transformer.transform_points(points),
+            points + offset,
+            rtol=0,
+            atol=POINT_ATOL,
         )
 
     def test_scale_correspondences_scale_points(self):
@@ -196,18 +201,21 @@ class TestTransformImage:
 
     @staticmethod
     def _translation_transformer(dx: float, dy: float) -> ViewTransformer:
-        return ViewTransformer(FRAME_CORNERS, FRAME_CORNERS + [dx, dy])
+        return ViewTransformer(FRAME_CORNERS, [*FRAME_CORNERS, dx, dy])
 
-    @pytest.mark.parametrize("channels", [
-        pytest.param((), id="grayscale"),
-        pytest.param((3,), id="color"),
-    ])
+    @pytest.mark.parametrize(
+        "channels",
+        [
+            pytest.param((), id="grayscale"),
+            pytest.param((3,), id="color"),
+        ],
+    )
     def test_output_has_requested_resolution_and_keeps_dtype(self, channels):
         """``resolution_wh`` is (width, height); output must be h x w (x channels)."""
         transformer = ViewTransformer(FRAME_CORNERS, FRAME_CORNERS)
-        image = np.zeros((360, 640) + channels, dtype=np.uint8)
+        image = np.zeros((360, 640, *channels), dtype=np.uint8)
         result = transformer.transform_image(image, resolution_wh=(200, 100))
-        assert (result.shape, result.dtype) == ((100, 200) + channels, np.uint8)
+        assert (result.shape, result.dtype) == ((100, 200, *channels), np.uint8)
 
     def test_translation_moves_a_pixel_by_the_offset(self):
         """A white pixel at (x=10, y=20) lands at (x=15, y=27) after shift (5, 7)."""
@@ -226,10 +234,13 @@ class TestTransformImage:
         result = transformer.transform_image(image, resolution_wh=(100, 100))
         assert (result[25:35, 25:35] == 255).all() and (result[0:15, 0:15] == 0).all()
 
-    @pytest.mark.parametrize("shape", [
-        pytest.param((10,), id="1d"),
-        pytest.param((2, 10, 10, 3), id="4d"),
-    ])
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            pytest.param((10,), id="1d"),
+            pytest.param((2, 10, 10, 3), id="4d"),
+        ],
+    )
     def test_rejects_images_that_are_not_grayscale_or_color(self, shape):
         """Only HxW and HxWxC images are supported."""
         transformer = ViewTransformer(FRAME_CORNERS, FRAME_CORNERS)
@@ -249,11 +260,13 @@ class TestPitchProjection:
         pixel positions back must recover the original pitch coordinates.
         """
         pitch = np.array(SoccerPitchConfiguration().vertices, dtype=float)
-        camera = np.array([
-            [0.08, 0.02, 100.0],
-            [0.0, 0.05, 80.0],
-            [0.0, 0.00005, 1.0],
-        ])
+        camera = np.array(
+            [
+                [0.08, 0.02, 100.0],
+                [0.0, 0.05, 80.0],
+                [0.0, 0.00005, 1.0],
+            ]
+        )
         frame_keypoints = project(camera, pitch).astype(np.float32)
         transformer = ViewTransformer(
             source=frame_keypoints, target=pitch.astype(np.float32)
