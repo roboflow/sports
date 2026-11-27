@@ -68,10 +68,11 @@ lint.ignore = [
 ]
 lint.per-file-ignores."__init__.py" = [ "F401" ]
 lint.per-file-ignores."tests/**" = [
-  "PT006", # parametrize names style
-  "PT011", # broad pytest.raises
-  "PT018", # composite assertions
-  "S101",  # assert is the point of tests
+  "PT006",  # parametrize names style
+  "PT011",  # broad pytest.raises
+  "PT018",  # composite assertions
+  "RUF005", # `ndarray + [dx, dy]` broadcasts; list unpacking would change meaning
+  "S101",   # assert is the point of tests
 ]
 
 [tool.codespell]

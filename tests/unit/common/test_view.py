@@ -121,10 +121,10 @@ class TestTransformPoints:
 
     def test_translation_correspondences_shift_points(self):
         """Target = source + (15, -7) shifts every point by the same offset."""
-        transformer = ViewTransformer(FRAME_CORNERS, [*FRAME_CORNERS, 15, -7])
+        transformer = ViewTransformer(FRAME_CORNERS, FRAME_CORNERS + [15, -7])
         points = np.array([[5, 6], [300, 200]], dtype=np.float32)
         np.testing.assert_allclose(
-            transformer.transform_points(points), [*points, 15, -7], atol=POINT_ATOL
+            transformer.transform_points(points), points + [15, -7], atol=POINT_ATOL
         )
 
     def test_large_offset_translation_preserves_invertible_mapping(self):
@@ -201,7 +201,7 @@ class TestTransformImage:
 
     @staticmethod
     def _translation_transformer(dx: float, dy: float) -> ViewTransformer:
-        return ViewTransformer(FRAME_CORNERS, [*FRAME_CORNERS, dx, dy])
+        return ViewTransformer(FRAME_CORNERS, FRAME_CORNERS + [dx, dy])
 
     @pytest.mark.parametrize(
         "channels",
