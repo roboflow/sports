@@ -2,7 +2,7 @@
 
 ## 💻 install
 
-We don't have a Python package yet. Install from source in a [**Python>=3.8**](https://www.python.org/) environment.
+Install from source with [Python 3.11 or newer](https://www.python.org/).
 
 ```bash
 pip install git+https://github.com/roboflow/sports.git
