@@ -34,6 +34,7 @@ setuptools.setup(
     extras_require={
         'tests': [
             'pytest',
+            'ultralytics',
         ]
     },
     classifiers=[

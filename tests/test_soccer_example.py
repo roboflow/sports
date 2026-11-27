@@ -76,11 +76,22 @@ class TestRenderRadar:
         [
             pytest.param([], id="no-keypoints-visible"),
             pytest.param([13, 14, 15], id="three-keypoints-visible"),
-            pytest.param([13, 14, 15, 16], id="four-keypoints-on-halfway-line"),
         ],
     )
     def test_returns_empty_pitch_when_view_cannot_be_mapped(self, main, visible_ids):
         keypoints = main.hide_low_confidence_keypoints(pitch_keypoints_in_view(main, visible_ids))
+
+        radar = main.render_radar(PLAYER_AT_CENTRE_SPOT, keypoints, np.array([0]))
+
+        np.testing.assert_array_equal(radar, draw_pitch(config=main.CONFIG))
+
+    def test_returns_empty_pitch_for_collinear_keypoints(self, main):
+        """Return an empty pitch when four visible points cannot define a homography."""
+        visible_ids = [13, 14, 15, 16]
+        keypoints = main.hide_low_confidence_keypoints(pitch_keypoints_in_view(main, visible_ids))
+        keypoints.xy[0, visible_ids] += 10
+        mask = (keypoints.xy[0, :, 0] > 1) & (keypoints.xy[0, :, 1] > 1)
+        assert np.count_nonzero(mask) == 4
 
         radar = main.render_radar(PLAYER_AT_CENTRE_SPOT, keypoints, np.array([0]))
 
