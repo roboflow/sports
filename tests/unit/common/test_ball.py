@@ -129,9 +129,12 @@ class TestBallAnnotatorAnnotate:
         Bottom-centre (where the ball touches the ground) is the anchor; the
         circle is an outline, so the centre pixel stays untouched.
         """
-        detections = ball_at((100, 98))  # box x 98..102, bottom y = 100
+        # The tall box separates the centres by 18 px, well beyond the stroke width.
+        detections = sv.Detections(xyxy=np.array([[98, 64, 102, 100]], dtype=float))
         result = BallAnnotator(radius=10).annotate(blank, detections)
-        assert result[100, 110].any() and not result[100, 100].any()
+        assert result[100, 110].any()
+        assert not result[100, 100].any()
+        assert not result[82, 110].any()
 
     def test_returns_a_frame_of_the_same_shape_and_dtype(self, blank):
         """Annotation never changes frame geometry or pixel type."""

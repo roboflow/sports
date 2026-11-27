@@ -204,7 +204,10 @@ class TestDrawPathsOnPitch:
         result = draw_paths_on_pitch(
             config, [corner_path, second], color=sv.Color.RED
         )
-        assert colour_at(result, *px(9000, 5000)) == BGR_RED
+        assert (
+            colour_at(result, *px(2000, 1000)),
+            colour_at(result, *px(9000, 5000)),
+        ) == (BGR_RED, BGR_RED)
 
     @pytest.mark.parametrize("paths", [
         pytest.param([], id="no-paths"),

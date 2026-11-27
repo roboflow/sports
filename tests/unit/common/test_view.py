@@ -125,6 +125,18 @@ class TestTransformPoints:
             transformer.transform_points(points), points + [15, -7], atol=POINT_ATOL
         )
 
+    def test_large_offset_translation_preserves_invertible_mapping(self):
+        """Changing the target origin does not degenerate a valid homography."""
+        corners = np.array([[0, 0], [1024, 0], [1024, 512], [0, 512]], dtype=np.float32)
+        points = np.array([[256, 256], [768, 128]], dtype=np.float32)
+        offset = np.array([2**27, 0], dtype=np.float32)
+        transformer = ViewTransformer(corners, corners + offset)
+
+        # The inputs and expected outputs are exactly representable in float32.
+        np.testing.assert_allclose(
+            transformer.transform_points(points), points + offset, rtol=0, atol=POINT_ATOL
+        )
+
     def test_scale_correspondences_scale_points(self):
         """Target = 0.5 * source halves every coordinate (frame to minimap)."""
         transformer = ViewTransformer(FRAME_CORNERS, FRAME_CORNERS * 0.5)

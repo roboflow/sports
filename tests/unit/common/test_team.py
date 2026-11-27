@@ -141,11 +141,18 @@ class TestTeamClassifier:
 
     def test_unseen_crops_get_the_label_of_their_shirt_colour(self, crops):
         """New players are assigned to the team whose shirt colour they wear."""
+        unseen = [jersey(RED_SHIRT, 7), jersey(BLUE_SHIRT, 7)]
+        assert all(
+            not np.array_equal(sample, training_crop)
+            for sample in unseen
+            for training_crop in crops
+        )
+
         classifier = TeamClassifier()
         classifier.fit(crops)
-        seen = classifier.predict([jersey(RED_SHIRT), jersey(BLUE_SHIRT)])
-        unseen = classifier.predict([jersey(RED_SHIRT, 4), jersey(BLUE_SHIRT, 4)])
-        assert seen.tolist() == unseen.tolist() and seen[0] != seen[1]
+        seen_labels = classifier.predict([jersey(RED_SHIRT), jersey(BLUE_SHIRT)])
+        unseen_labels = classifier.predict(unseen)
+        assert seen_labels.tolist() == unseen_labels.tolist() and seen_labels[0] != seen_labels[1]
 
     def test_predict_on_no_crops_returns_empty_array(self, crops):
         """A frame with no players yields an empty prediction, not an error."""
