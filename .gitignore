@@ -153,3 +153,9 @@ Desktop.ini
 *~
 .directory
 .Trash-*
+
+# AI assisted
+.claude/state/
+.plans/
+.reports/
+.temp/
