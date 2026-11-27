@@ -29,7 +29,7 @@ class ViewTransformer:
         source = source.astype(np.float32)
         target = target.astype(np.float32)
         self.m, _ = cv2.findHomography(source, target)
-        if self.m is None:
+        if self.m is None or np.linalg.matrix_rank(self.m) < 3:
             raise ValueError("Homography matrix could not be calculated.")
 
     def transform_points(

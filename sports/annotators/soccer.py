@@ -222,7 +222,7 @@ def draw_paths_on_pitch(
                 thickness=thickness
             )
 
-        return pitch
+    return pitch
 
 
 def draw_pitch_voronoi_diagram(

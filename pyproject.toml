@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sports"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [{ name = "Piotr Skalski", email = "piotr.skalski92@gmail.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development",
+    "Topic :: Scientific/Engineering",
+    "Typing :: Typed",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX",
+    "Operating System :: Unix",
+    "Operating System :: MacOS",
+]
+dependencies = [
+    "supervision",
+    "numpy",
+    "opencv-python",
+    "torch",
+    "transformers",
+    "umap-learn",
+    "scikit-learn",
+    "tqdm",
+    "sentencepiece",
+    "protobuf",
+]
+
+[project.optional-dependencies]
+tests = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/roboflow/sports"
+
+[tool.setuptools.packages.find]
+include = ["sports*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --import-mode=importlib --strict-markers"
+xfail_strict = true
