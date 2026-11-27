@@ -4,6 +4,16 @@ import numpy as np
 import numpy.typing as npt
 
 
+def _coordinate_basis(points: npt.NDArray[np.float32]) -> npt.NDArray[np.float64]:
+    """Map centered, scaled coordinates back to the original point coordinates."""
+    center = points.mean(axis=0, dtype=np.float64)
+    scale = np.abs(points - center).max() or 1.0
+    basis = np.eye(3)
+    basis[:2, :2] *= scale
+    basis[:2, 2] = center
+    return basis
+
+
 class ViewTransformer:
     def __init__(
             self,
@@ -28,9 +38,18 @@ class ViewTransformer:
 
         source = source.astype(np.float32)
         target = target.astype(np.float32)
-        self.m, _ = cv2.findHomography(source, target)
-        if self.m is None:
+        matrix, _ = cv2.findHomography(source, target)
+        if matrix is None:
             raise ValueError("Homography matrix could not be calculated.")
+
+        # Test rank in local coordinate frames so a large origin offset does not
+        # dominate the numerical tolerance. Keep the original fit for projection.
+        normalized = np.linalg.solve(
+            _coordinate_basis(target), matrix @ _coordinate_basis(source)
+        )
+        if np.linalg.matrix_rank(normalized) < 3:
+            raise ValueError("Homography matrix could not be calculated.")
+        self.m = matrix
 
     def transform_points(
             self,
