@@ -96,7 +96,7 @@ class TeamClassifier:
         """
         crops = [crop for crop in crops if crop.size != 0]
         if not crops:
-            raise ValueError('Cannot fit team classifier without a non-empty crop')
+            raise ValueError("Cannot fit team classifier without a non-empty crop")
 
         data = self.extract_features(crops)
         projections = self.reducer.fit_transform(data)
@@ -116,7 +116,7 @@ class TeamClassifier:
             return np.array([])
 
         if any(crop.size == 0 for crop in crops):
-            raise ValueError('Cannot predict teams for empty crops')
+            raise ValueError("Cannot predict teams for empty crops")
 
         data = self.extract_features(crops)
         projections = self.reducer.transform(data)
