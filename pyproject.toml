@@ -67,6 +67,7 @@ lint.ignore = [
   "E501", # line length is owned by `ruff format`
 ]
 lint.per-file-ignores."__init__.py" = [ "F401" ]
+lint.per-file-ignores."examples/_tests/**" = [ "S101" ]
 lint.per-file-ignores."tests/**" = [
   "PT006",  # parametrize names style
   "PT011",  # broad pytest.raises
@@ -80,6 +81,6 @@ skip = "*.ipynb"
 quiet-level = 3
 
 [tool.pytest]
-ini_options.testpaths = [ "tests" ]
+ini_options.testpaths = [ "tests", "examples/_tests" ]
 ini_options.addopts = "-ra --import-mode=importlib --strict-markers"
 ini_options.xfail_strict = true
