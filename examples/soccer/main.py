@@ -116,6 +116,9 @@ def resolve_goalkeepers_team_id(
     the players. Then, it assigns each goalkeeper to the nearest team's centroid by
     calculating the distance between each goalkeeper and the centroids of the two teams.
     """
+    if len(goalkeepers) == 0:
+        return np.array([], dtype=int)
+
     goalkeepers_xy = goalkeepers.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
     players_xy = players.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
     team_0_centroid = players_xy[players_team_id == 0].mean(axis=0)
@@ -317,9 +320,14 @@ def run_team_classification(
 
         players = detections[detections.class_id == PLAYER_CLASS_ID]
         crops = get_crops(frame, players)
+        valid_crops = np.array([crop.size != 0 for crop in crops], dtype=bool)
+        players = players[valid_crops]
+        crops = [crop for crop in crops if crop.size != 0]
         players_team_id = team_classifier.predict(crops)
 
         goalkeepers = detections[detections.class_id == GOALKEEPER_CLASS_ID]
+        if not (np.any(players_team_id == 0) and np.any(players_team_id == 1)):
+            goalkeepers = goalkeepers[np.zeros(len(goalkeepers), dtype=bool)]
         goalkeepers_team_id = resolve_goalkeepers_team_id(
             players, players_team_id, goalkeepers
         )
@@ -371,9 +379,14 @@ def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
 
         players = detections[detections.class_id == PLAYER_CLASS_ID]
         crops = get_crops(frame, players)
+        valid_crops = np.array([crop.size != 0 for crop in crops], dtype=bool)
+        players = players[valid_crops]
+        crops = [crop for crop in crops if crop.size != 0]
         players_team_id = team_classifier.predict(crops)
 
         goalkeepers = detections[detections.class_id == GOALKEEPER_CLASS_ID]
+        if not (np.any(players_team_id == 0) and np.any(players_team_id == 1)):
+            goalkeepers = goalkeepers[np.zeros(len(goalkeepers), dtype=bool)]
         goalkeepers_team_id = resolve_goalkeepers_team_id(
             players, players_team_id, goalkeepers
         )
