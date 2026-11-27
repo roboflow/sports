@@ -34,7 +34,7 @@ dependencies = [
   "protobuf",
   "scikit-learn",
   "sentencepiece",
-  "supervision",
+  "supervision>=0.29",
   "torch",
   "tqdm",
   "transformers",
@@ -43,7 +43,7 @@ dependencies = [
 urls.Homepage = "https://github.com/roboflow/sports"
 
 [dependency-groups]
-test = [ "pytest>=7.2.2,<10" ]
+test = [ "pytest>=7.2.2,<10", "ultralytics" ]
 
 [tool.setuptools]
 packages.find.include = [ "sports*" ]
