@@ -1,4 +1,5 @@
-from typing import Generator, Iterable, List, TypeVar
+from collections.abc import Generator, Iterable
+from typing import TypeVar
 
 import numpy as np
 import supervision as sv
@@ -10,12 +11,12 @@ from transformers import AutoProcessor, SiglipVisionModel
 
 V = TypeVar("V")
 
-SIGLIP_MODEL_PATH = 'google/siglip-base-patch16-224'
+SIGLIP_MODEL_PATH = "google/siglip-base-patch16-224"
 
 
 def create_batches(
     sequence: Iterable[V], batch_size: int
-) -> Generator[List[V], None, None]:
+) -> Generator[list[V], None, None]:
     """
     Generate batches from a sequence with a specified batch size.
 
@@ -43,23 +44,25 @@ class TeamClassifier:
     A classifier that uses a pre-trained SiglipVisionModel for feature extraction,
     UMAP for dimensionality reduction, and KMeans for clustering.
     """
-    def __init__(self, device: str = 'cpu', batch_size: int = 32):
-        """
-       Initialize the TeamClassifier with device and batch size.
 
-       Args:
-           device (str): The device to run the model on ('cpu' or 'cuda').
-           batch_size (int): The batch size for processing images.
-       """
+    def __init__(self, device: str = "cpu", batch_size: int = 32):
+        """
+        Initialize the TeamClassifier with device and batch size.
+
+        Args:
+            device (str): The device to run the model on ('cpu' or 'cuda').
+            batch_size (int): The batch size for processing images.
+        """
         self.device = device
         self.batch_size = batch_size
-        self.features_model = SiglipVisionModel.from_pretrained(
-            SIGLIP_MODEL_PATH).to(device)
+        self.features_model = SiglipVisionModel.from_pretrained(SIGLIP_MODEL_PATH).to(
+            device
+        )
         self.processor = AutoProcessor.from_pretrained(SIGLIP_MODEL_PATH)
         self.reducer = umap.UMAP(n_components=3)
         self.cluster_model = KMeans(n_clusters=2)
 
-    def extract_features(self, crops: List[np.ndarray]) -> np.ndarray:
+    def extract_features(self, crops: list[np.ndarray]) -> np.ndarray:
         """
         Extract features from a list of image crops using the pre-trained
             SiglipVisionModel.
@@ -74,16 +77,17 @@ class TeamClassifier:
         batches = create_batches(crops, self.batch_size)
         data = []
         with torch.no_grad():
-            for batch in tqdm(batches, desc='Embedding extraction'):
-                inputs = self.processor(
-                    images=batch, return_tensors="pt").to(self.device)
+            for batch in tqdm(batches, desc="Embedding extraction"):
+                inputs = self.processor(images=batch, return_tensors="pt").to(
+                    self.device
+                )
                 outputs = self.features_model(**inputs)
                 embeddings = torch.mean(outputs.last_hidden_state, dim=1).cpu().numpy()
                 data.append(embeddings)
 
         return np.concatenate(data)
 
-    def fit(self, crops: List[np.ndarray]) -> None:
+    def fit(self, crops: list[np.ndarray]) -> None:
         """
         Fit the classifier model on a list of image crops.
 
@@ -98,7 +102,7 @@ class TeamClassifier:
         projections = self.reducer.fit_transform(data)
         self.cluster_model.fit(projections)
 
-    def predict(self, crops: List[np.ndarray]) -> np.ndarray:
+    def predict(self, crops: list[np.ndarray]) -> np.ndarray:
         """
         Predict the cluster labels for a list of image crops.
 

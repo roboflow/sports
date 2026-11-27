@@ -1,52 +1,85 @@
 [build-system]
-requires = ["setuptools>=75.3.2"]
 build-backend = "setuptools.build_meta"
+requires = [ "setuptools>=75.3.2" ]
 
 [project]
 name = "sports"
 version = "0.1.0"
 description = ""
 readme = "README.md"
-requires-python = ">=3.8"
-license = {text = "MIT"}
-authors = [{ name = "Piotr Skalski", email = "piotr.skalski92@gmail.com" }]
+license = { text = "MIT" }
+authors = [ { name = "Piotr Skalski", email = "piotr.skalski92@gmail.com" } ]
+requires-python = ">=3.11"
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3 :: Only",
-    "Topic :: Software Development",
-    "Topic :: Scientific/Engineering",
-    "Typing :: Typed",
-    "Operating System :: Microsoft :: Windows",
-    "Operating System :: POSIX",
-    "Operating System :: Unix",
-    "Operating System :: MacOS",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX",
+  "Operating System :: Unix",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development",
+  "Typing :: Typed",
 ]
 dependencies = [
-    "supervision",
-    "numpy",
-    "opencv-python",
-    "torch",
-    "transformers",
-    "umap-learn",
-    "scikit-learn",
-    "tqdm",
-    "sentencepiece",
-    "protobuf",
+  "numpy",
+  "opencv-python",
+  "protobuf",
+  "scikit-learn",
+  "sentencepiece",
+  "supervision",
+  "torch",
+  "tqdm",
+  "transformers",
+  "umap-learn",
+]
+urls.Homepage = "https://github.com/roboflow/sports"
+
+[dependency-groups]
+test = [ "pytest>=7.2.2,<10" ]
+
+[tool.setuptools]
+packages.find.include = [ "sports*" ]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+format.quote-style = "double"
+lint.select = [
+  "E",   # pycodestyle errors
+  "F",   # Pyflakes
+  "I",   # isort
+  "PT",  # flake8-pytest-style
+  "Q",   # flake8-quotes
+  "RUF", # Ruff-specific rules
+  "S",   # flake8-bandit
+  "UP",  # pyupgrade
+  "W",   # pycodestyle warnings
+]
+lint.ignore = [
+  "E501", # line length is owned by `ruff format`
+]
+lint.per-file-ignores."__init__.py" = [ "F401" ]
+lint.per-file-ignores."tests/**" = [
+  "PT006",  # parametrize names style
+  "PT011",  # broad pytest.raises
+  "PT018",  # composite assertions
+  "RUF005", # `ndarray + [dx, dy]` broadcasts; list unpacking would change meaning
+  "S101",   # assert is the point of tests
 ]
 
-[project.optional-dependencies]
-tests = ["pytest"]
+[tool.codespell]
+skip = "*.ipynb"
+quiet-level = 3
 
-[project.urls]
-Homepage = "https://github.com/roboflow/sports"
-
-[tool.setuptools.packages.find]
-include = ["sports*"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-ra --import-mode=importlib --strict-markers"
-xfail_strict = true
+[tool.pytest]
+ini_options.testpaths = [ "tests" ]
+ini_options.addopts = "-ra --import-mode=importlib --strict-markers"
+ini_options.xfail_strict = true
