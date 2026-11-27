@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 
 def test_crop_filter_preserves_player_alignment():
@@ -26,7 +27,7 @@ def test_crop_filter_preserves_player_alignment():
         for node in tree.body
         if getattr(node, "name", "") in {"TeamClassifier", "create_batches"}
     ]
-    exec(
+    exec(  # noqa: S102
         compile(tree, str(team), "exec", flags=__future__.annotations.compiler_flag),
         env,
     )
@@ -64,12 +65,8 @@ def test_crop_filter_preserves_player_alignment():
         lambda: model.fit([empty]),
         lambda: model.fit([]),
     ):
-        try:
+        with pytest.raises(ValueError, match="empty crop"):
             operation()
-        except ValueError as error:
-            assert "empty crop" in str(error)
-        else:
-            raise AssertionError("expected empty crop error")
     source = ast.parse((root / "examples/soccer/main.py").read_text())
     for name in ("run_team_classification", "run_radar"):
         fn = next(
@@ -115,7 +112,9 @@ def test_crop_filter_preserves_player_alignment():
                 get_crops=lambda frame, players: crops,
                 team_classifier=model,
             )
-            exec(compile(block, str(root / "examples/soccer/main.py"), "exec"), context)
+            exec(  # noqa: S102
+                compile(block, str(root / "examples/soccer/main.py"), "exec"), context
+            )
             assert context["players"].tolist() == expected
             assert len(context["players_team_id"]) == len(expected)
     print("valid, mixed and all-empty crop checks passed in both soccer modes")
@@ -137,7 +136,7 @@ def test_missing_team_centroid_omits_goalkeepers():
         "np": np,
         "sv": SimpleNamespace(Position=SimpleNamespace(BOTTOM_CENTER=0)),
     }
-    exec(
+    exec(  # noqa: S102
         compile(
             resolver_module,
             str(source),
@@ -166,7 +165,9 @@ def test_missing_team_centroid_omits_goalkeepers():
                 "players_team_id": labels,
                 "goalkeepers": np.array([42]),
             }
-            exec(compile(module, str(source), "exec"), context)
+            exec(  # noqa: S102
+                compile(module, str(source), "exec"), context
+            )
             assert context["goalkeepers"].tolist() == []
             assert (
                 environment["resolve_goalkeepers_team_id"](
@@ -179,5 +180,5 @@ def test_missing_team_centroid_omits_goalkeepers():
             "players_team_id": np.array([0, 1]),
             "goalkeepers": np.array([42]),
         }
-        exec(compile(module, str(source), "exec"), context)
+        exec(compile(module, str(source), "exec"), context)  # noqa: S102
         assert context["goalkeepers"].tolist() == [42]
