@@ -13,7 +13,7 @@ import pytest
 
 def test_crop_filter_preserves_player_alignment():
     """Keep detections aligned with predictions in both soccer modes."""
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     env = dict(
         np=np,
         torch=SimpleNamespace(no_grad=nullcontext, mean=lambda x, dim: x),
@@ -122,7 +122,7 @@ def test_crop_filter_preserves_player_alignment():
 
 def test_resolver_returns_empty_for_no_goalkeepers():
     """Return no team IDs when no goalkeepers remain."""
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     source = root / "examples/soccer/main.py"
     tree = ast.parse(source.read_text())
     resolver = next(
@@ -161,7 +161,7 @@ def test_resolver_returns_empty_for_no_goalkeepers():
 )
 def test_goalkeeper_guard_depends_on_available_teams(labels, expected):
     """Keep goalkeepers only when both team centroids are available."""
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     source = root / "examples/soccer/main.py"
     tree = ast.parse(source.read_text())
     for name in ("run_team_classification", "run_radar"):
