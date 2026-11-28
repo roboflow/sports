@@ -41,9 +41,9 @@ def draw_pitch(
     scaled_circle_radius = int(config.centre_circle_radius * scale)
     scaled_penalty_spot_distance = int(config.penalty_spot_distance * scale)
 
-    pitch_image = np.ones(
-        (scaled_width + 2 * padding, scaled_length + 2 * padding, 3), dtype=np.uint8
-    ) * np.array(background_color.as_bgr(), dtype=np.uint8)
+    height = scaled_width + 2 * padding
+    width = scaled_length + 2 * padding
+    pitch_image = np.full((height, width, 3), background_color.as_bgr(), dtype=np.uint8)
 
     for start, end in config.edges:
         point1 = (
